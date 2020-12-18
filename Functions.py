@@ -212,6 +212,7 @@ class FeedBack(tf.keras.Model):
             x = prediction
             # Execute one lstm step.
             x, state = self.lstm_cell(x, states=state, training=training)
+            x, state = self.lstm_cell(x, states = state, training = training)
             # Convert the lstm output to a prediction.
             prediction = self.dense(x)
             # Add the prediction to the output
@@ -222,20 +223,25 @@ class FeedBack(tf.keras.Model):
         # predictions.shape => (batch, time, features)
         predictions = tf.transpose(predictions, [1, 0, 2])
         return predictions
-
-def Predict7DayHigh(target_symbol, input_data, epochs):
+    
+def CreateModel(data):
     input_width = 30
     label_width = 1
-
+    
+    model = FeedBack(16, label_width, data.shape[1])
+    model.compile(loss = tf.losses.MeanSquaredError(), optimizer = tf.optimizers.Adam(), metrics=[tf.metrics.MeanAbsoluteError()])
+    
+    return model
+    
+def TrainModel(model, target_symbol, input_data, epochs):
+    input_width = 30
+    label_width = 1
     # perhaps just normalize? no differencing?
     diff_data = input_data.diff()
     diff_data.iloc[0,:] = 0
 
     train_df = diff_data[:-label_width*3]
     val_df = diff_data[-(input_width+label_width*3):]
-
-    model = FeedBack(16, label_width, train_df.shape[1])
-    model.compile(loss = tf.losses.MeanSquaredError(), optimizer = tf.optimizers.Adam(), metrics=[tf.metrics.MeanAbsoluteError()])
 
     window = WindowGenerator(input_width, label_width, label_width, train_df, label_columns=[target_symbol])
 
@@ -248,7 +254,11 @@ def Predict7DayHigh(target_symbol, input_data, epochs):
     history = model.fit(train_ds, validation_data=val_ds, shuffle=True, validation_steps=1, callbacks = [early_stop, checkpoints], epochs = epochs, verbose = 0)
 
     model.load_weights('./models/checkpoint')
+    return model
     
+
+def Predict7DayHigh(model, target_symbol, input_data):
+
     pred_data = np.reshape(np.array(diff_data[-input_width:]), newshape = (1, input_width, -1))
     next_7_days = model.predict(tf.constant(pred_data)).reshape(label_width, -1)
     symbol_seven_day_high = np.max(np.cumsum(next_7_days[:,diff_data.columns == target_symbol]))

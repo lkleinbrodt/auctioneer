@@ -22,12 +22,13 @@ from Functions import *
 ########## PARAMETERS ##############
 
 start_date = '2019-11-01'
-end_date = '2020-11-01'
+end_date = '2020-12-01'
 
 movement_threshold = 0
 
 starting_cash = 100_000
-max_per_trade = .01
+max_per_buy = .01
+max_per_sell = .25
 max_epochs = 25
 
 ########## END PARAMETERS #############
@@ -48,7 +49,7 @@ portfolio['Value'] = portfolio['Value'].astype(float)
 
 ### Define One Day of trading behavior, should take in a date, and output the actions that will be taken
 
-def TradingDay(current_day, portfolio, buying_power, api, epochs):
+def TradingDay(current_day, portfolio, buying_power, model_dict, api, epochs):
     ###Get stocks of Interest
     #soi = IdentifyStocksOfInterest()
     soi = ['SPY']
@@ -67,7 +68,14 @@ def TradingDay(current_day, portfolio, buying_power, api, epochs):
     stocks_to_predict = [col for col in data if col in stocks_to_predict]
     
     for symbol in stocks_to_predict:
-        preds.append(Predict7DayHigh(symbol, data, epochs))
+        if symbol not in model_dict.keys():
+            print('Creating model for' + str(symbol) + str(current_day))
+            model_dict[symbol] = CreateModel(data)
+            model_dict[symbol] = TrainModel(model_dict[symbol], symbol, data, epochs) 
+        elif current_day.day in [1, 15]:
+            print('training' + str(symbol) + str(current_day))
+            model_dict[symbol] = TrainModel(model_dict[symbol], symbol, data, epochs)    
+        preds.append(Predict7DayHigh(model_dict[symbol], symbol, data))
         current_prices[symbol] = data.iloc[-1][symbol]
     preds = dict(preds)
     adjusted_movements = {sym: (preds[sym]/current_prices[sym]) for sym in preds.keys()}
@@ -79,18 +87,19 @@ def TradingDay(current_day, portfolio, buying_power, api, epochs):
         
         if adjusted_movements[symbol] > movement_threshold:
             side = 'buy'
-            quantity = (buying_power * max_per_trade) // current_prices[symbol]
+            quantity = (buying_power * max_per_buy) // current_prices[symbol]
 
         elif (adjusted_movements[symbol] < -movement_threshold) and (symbol in list(portfolio['Symbol'])):
             side = 'sell'
-            quantity = portfolio[portfolio['Symbol']==symbol]['Quantity'].astype(int)[0]
+            quantity = np.max([1, np.floor(portfolio[portfolio['Symbol']==symbol]['Value'][0] * max_per_sell)])
+            #quantity = portfolio[portfolio['Symbol']==symbol]['Quantity'].astype(int)[0]
         
         else:
             continue
 
         orders[symbol] = {'Side': side, 'Quantity': quantity}
     
-    return preds, orders, current_prices
+    return preds, orders, current_prices, model_dict
 
 
 def Execution(day_of_order, orders, portfolio, buying_power):
@@ -128,6 +137,7 @@ def Execution(day_of_order, orders, portfolio, buying_power):
                 #print('New buying power: ' + str(buying_power))
             elif orders[symbol]['Side'] == 'sell':
                 #print('Selling {} shares of {} at {} per share for a total sale of {}.'.format(quantity, symbol, np.round(price,5), np.round(cost,5)))
+                
                 buying_power += cost
                 portfolio = portfolio[portfolio['Symbol'] != symbol]
                 #print('New buying power: ' + str(buying_power))
@@ -151,7 +161,8 @@ order_history = []
 price_history = []
 portfolio_history = []
 buying_power = starting_cash
-
+model_dict = dict()
+ 
 while day < end_day:
     print('-----------------------------------------------------------')
     print('-----------------------------------------------------------')
@@ -167,7 +178,7 @@ while day < end_day:
 
     print('Working on {}'.format(day.strftime('%Y-%m-%d')))
 
-    preds, orders, prices = TradingDay(day, portfolio, buying_power, api, epochs = max_epochs)
+    preds, orders, prices, model_dict = TradingDay(day, portfolio, buying_power, model_dict, api, epochs = max_epochs)
     print('----Closing prices for the day:')
     print(prices)
     print('----Predictions for next 7 days:')
