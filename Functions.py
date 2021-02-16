@@ -1,54 +1,70 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from dateutil.relativedelta import relativedelta
 import alpaca_trade_api as alp
+from sklearn.preprocessing import MinMaxScaler
+import os
+import pandas_market_calendars as mcal
+import logging
 
-def IdentifyStocksOfInterest():
-    ###For now, will just return 10 cached tech stocks
-    
+def IdentifyStocksOfInterest(all = False):
     #symbols = pd.read_csv('symbols.csv')['Symbol'].tolist()
-    with open('./energy_tickers.txt', 'r') as f:
+    with open('./Data/energy_tickers.txt', 'r') as f:
         symbols = f.read().split('\n')
     
-    return symbols[10:19]
+    if all:
+        return symbols
+    else:
+        return np.random.choice(symbols, 10, replace = False).tolist()
 
-def GetHistoricalData(symbols, api, end, start = None, open_or_close = 'open'):
-    ###For now, we will explicitly say what the relevant stocks are,
-    ###but in future this should be automated
+def GetHistoricalData(symbols, api, end_date = datetime.now(), n_data_points = 200_000):
     symbols_to_pull = np.unique(symbols)
     
-    if isinstance(end, str):
-        end = pd.to_datetime(end)
-        
-    if end is None:
-        end = datetime.now()
+    if isinstance(end_date, str):
+        end_date = pd.to_datetime(end_date)
+
+    data = pd.DataFrame()
+
+    if n_data_points < 2000:
+        time_step = 1
+    elif n_data_points < 10_000:
+        time_step = 10
+    else:
+        time_step = 50
+
+    while data.shape[0] < n_data_points:
+        start = end_date - relativedelta(days=time_step)
+        data_list = []
+        for sym in symbols_to_pull:
+            quotes = api.polygon.historic_agg_v2(symbol = sym, multiplier = 1, timespan = 'minute', 
+                                                 _from = start, to = end_date, limit = 50_000).df
+            quotes = quotes[['close']]
+            quotes.rename(columns = {'close': sym}, inplace = True)
+            data_list.append(quotes)
+        batch_df = pd.concat(data_list, axis = 1)
+  
+        data = pd.concat([data, batch_df], axis = 0)
+        end_date = start
     
-    ### We will use 5 years of historical daily data, meaning we need ~ 1,265 trading days of data,
-    n_days = 1265
-    if start == None:
-        start = end - relativedelta(days = n_days)
-        
-    all_quotes = []
-    for sym in symbols_to_pull:
-        quotes = api.polygon.historic_agg_v2(symbol = sym, multiplier = 1, timespan = 'day', _from = start, to = end).df
-        quotes = quotes[['close']]
-        quotes.rename(columns={'close': sym}, inplace = True)
-        all_quotes.append(quotes)
-    data = pd.concat(all_quotes, axis = 1)
-        
+    data.sort_index(inplace = True)
+    data = data.fillna(method = 'ffill')
+    data = data.fillna(method = 'bfill')
+
+    data = data.tail(n_data_points)
+
     bad_cols = data.columns[data.isna().sum() > 0]
     if len(bad_cols) > 0:
         data = data.drop(bad_cols, axis = 1)
-        print('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
-        
+        logging.debug('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
+
     return data
 
 def GetDayQuotes(symbols, api, date, open_or_close = 'open'):
     
     if isinstance(date, str):
-        date = pd.to_datetime(end)
+        date = pd.to_datetime(date)
     if date is None:
         date = datetime.now()
         
@@ -62,8 +78,10 @@ def GetDayQuotes(symbols, api, date, open_or_close = 'open'):
     bad_cols = data.columns[data.isna().sum() > 0]
     if len(bad_cols) > 0:
         data = data.drop(bad_cols, axis = 1)
-        print('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
+        logging.debug('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
     return dict(data.iloc[0])
+
+#%%
 
 def GetLongReturns(symbols_to_consider, api, start, end):
 
@@ -74,7 +92,7 @@ def GetLongReturns(symbols_to_consider, api, start, end):
     invalid_symbols = [sym for sym in symbols_to_consider if sym not in valid_symbols]
 
     if len(invalid_symbols) > 0:
-        print('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
+        logging.debug('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
 
     returns = pd.DataFrame({'Start': starting_prices, 'End': ending_prices})
     returns['Return'] = returns['End'] / returns['Start']
@@ -86,14 +104,128 @@ def GetLongReturns(symbols_to_consider, api, start, end):
     top_five = list(returns[returns['ReturnRank']<6].index)
     weighted_return = np.mean(returns['Return'])
 
-    print('Top Fund: ' + top_fund)
-    print('Top Fund Return: {}'.format(top_fund_return))
-    print('Top 5 Funds: {}'.format(top_five))
-    print('Top 5 Fund Return: {}'.format(top_five_return))
-    print('Overall weighted Return: {}'.format(weighted_return))
+    logging.info('Top Fund: ' + top_fund)
+    logging.info('Top Fund Return: {}'.format(top_fund_return))
+    logging.info('Top 5 Funds: {}'.format(top_five))
+    logging.info('Top 5 Fund Return: {}'.format(top_five_return))
+    logging.info('Overall weighted Return: {}'.format(weighted_return))
 
     return returns
 
+def CreateEncoderModel(history_steps, target_steps, n_features):
+    enc_inputs = tf.keras.layers.Input(shape = (history_steps, n_features))
+    enc_out1 = tf.keras.layers.LSTM(16, return_sequences = True, return_state = True)(enc_inputs)
+    enc_states1 = enc_out1[1:]
+
+    enc_out2 = tf.keras.layers.LSTM(16, return_state = True)(enc_out1[0])
+    enc_states2 = enc_out2[1:]
+
+    dec_inputs = tf.keras.layers.RepeatVector(target_steps)(enc_out2[0])
+
+    dec_l1 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_inputs, initial_state = enc_states1)
+    dec_l2 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_l1, initial_state = enc_states2)
+
+    dec_out = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_features))(dec_l2)
+
+    model = tf.keras.models.Model(enc_inputs, dec_out)
+
+    return model
+
+def GenerateWindowData(df, HISTORY_STEPS, TARGET_STEPS, train_test_split = .9):
+    def split_series(series, n_past, n_future):
+        X, Y = list(), list()
+
+        for window_start in range(len(series)):
+            past_end = window_start + n_past
+            future_end = past_end + n_future
+            if future_end > len(series):
+                break
+            past = series[window_start:past_end, :]
+            future = series[past_end:future_end, :]
+            X.append(past)
+            Y.append(future)
+        return np.array(X), np.array(Y)
+    
+    df = df.sort_index().copy()
+    n_features = df.shape[1]
+    scalers = {}
+    if train_test_split > 0:
+        n_train_samples = np.int(df.shape[0] * train_test_split)
+        train, test = df[:n_train_samples], df[n_train_samples:]
+        
+        for col in train.columns:
+            scaler = MinMaxScaler(feature_range=(-1,1))
+            norm = scaler.fit_transform(train[col].values.reshape(-1,1))
+            norm = np.reshape(norm, len(norm))
+            scalers[col] = scaler
+            train[col] = norm
+
+        for col in train.columns:
+            scaler = scalers[col]
+            norm = scaler.transform(test[col].values.reshape(-1,1))
+            norm = np.reshape(norm, len(norm))
+            test[col] = norm
+        
+        X_train, Y_train = split_series(train.values, HISTORY_STEPS, TARGET_STEPS)
+        X_test, Y_test = split_series(test.values, HISTORY_STEPS, TARGET_STEPS)
+        return X_train, Y_train, X_test, Y_test, scalers
+    else: 
+        for col in df.columns:
+            scaler = MinMaxScaler(feature_range=(-1,1))
+            norm = scaler.fit_transform(df[col].values.reshape(-1,1))
+            norm = np.reshape(norm, len(norm))
+            scalers[col] = scaler
+            df[col] = norm
+        X_df, Y_df = split_series(df.values, HISTORY_STEPS, TARGET_STEPS)
+        return X_df, Y_df, scalers
+
+def TrainEncoderModel(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, LEARNING_RATE):
+    
+    X_train, Y_train, X_test, Y_test, scalers = GenerateWindowData(df, HISTORY_STEPS, TARGET_STEPS)
+    n_features = X_train.shape[2]
+    
+    model = CreateEncoderModel(HISTORY_STEPS, TARGET_STEPS, n_features)
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        LEARNING_RATE, 
+        decay_steps = int(X_train.shape[0] / BATCH_SIZE) * 2, 
+        decay_rate = .96
+    )
+
+    model.compile(
+        optimizer = tf.keras.optimizers.Adam(), 
+        loss = tf.keras.losses.Huber(),
+        learning_rate = lr_schedule
+    )
+
+    early_stopping = tf.keras.callbacks.EarlyStopping(patience = 5)
+    model_checkpoints = tf.keras.callbacks.ModelCheckpoint('models/checkpoints/', save_best_only = True, save_weights_only = True)
+    log_callback = tf.keras.callbacks.CSVLogger('Logs/backtest_log.log', append = True)
+    my_callbacks = [early_stopping, model_checkpoints, log_callback]
+
+    model.fit(
+        X_train, Y_train, 
+        epochs = MAX_EPOCHS, 
+        validation_data = (X_test, Y_test), 
+        batch_size = BATCH_SIZE, 
+        callbacks = my_callbacks,
+        verbose = 1
+        )
+
+    model.load_weights('models/checkpoints/')
+    model.save_weights('models/TrainedModel')
+
+    return model, scalers
+
+def CheckHoliday(date):
+    nyse = mcal.get_calendar('NYSE')
+    while date.isoweekday() > 5 or date in nyse.holidays().holidays:
+        date += timedelta(days = 1)
+    return date
+
+############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED
+############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED
+############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED
+############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED############DEPRECATED
 
 class WindowGenerator():
     def __init__(self, input_width, label_width, shift, data, label_columns=None):
@@ -264,3 +396,4 @@ def Predict7DayHigh(model, target_symbol, input_data):
     symbol_seven_day_high = np.max(np.cumsum(next_7_days[:,diff_data.columns == target_symbol]))
 
     return (target_symbol, symbol_seven_day_high)
+# %%
