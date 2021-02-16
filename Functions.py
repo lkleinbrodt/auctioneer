@@ -11,15 +11,16 @@ import logging
 
 def IdentifyStocksOfInterest(all = False):
     #symbols = pd.read_csv('symbols.csv')['Symbol'].tolist()
-    with open('./Data/energy_tickers.txt', 'r') as f:
-        symbols = f.read().split('\n')
     
+    #with open('./Data/energy_tickers.txt', 'r') as f:
+    #    symbols = f.read().split('\n')
+    symbols = ['AAPL', 'TSLA', 'APHA', 'GOOGL', 'GE', 'F', 'AAL', 'AMZN', 'MSFT', 'KIRK', 'MSTR', 'FB', 'BABA', 'BRK.A', 'V', 'JNJ', 'JPM', 'WMT', 'NVDA', 'PYPL', 'DIS']
     if all:
         return symbols
     else:
-        return np.random.choice(symbols, 10, replace = False).tolist()
+        return np.random.choice(symbols, 5, replace = False).tolist()
 
-def GetHistoricalData(symbols, api, end_date = datetime.now(), n_data_points = 200_000):
+def GetHistoricalData(symbols, api, end_date = datetime.now(), n_data_points = 7500):
     symbols_to_pull = np.unique(symbols)
     
     if isinstance(end_date, str):
@@ -27,18 +28,16 @@ def GetHistoricalData(symbols, api, end_date = datetime.now(), n_data_points = 2
 
     data = pd.DataFrame()
 
-    if n_data_points < 2000:
+    if n_data_points < 100:
         time_step = 1
-    elif n_data_points < 10_000:
-        time_step = 10
     else:
-        time_step = 50
+        time_step = 100
 
     while data.shape[0] < n_data_points:
         start = end_date - relativedelta(days=time_step)
         data_list = []
         for sym in symbols_to_pull:
-            quotes = api.polygon.historic_agg_v2(symbol = sym, multiplier = 1, timespan = 'minute', 
+            quotes = api.polygon.historic_agg_v2(symbol = sym, multiplier = 1, timespan = 'hour', 
                                                  _from = start, to = end_date, limit = 50_000).df
             quotes = quotes[['close']]
             quotes.rename(columns = {'close': sym}, inplace = True)
@@ -199,8 +198,9 @@ def TrainEncoderModel(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, L
 
     early_stopping = tf.keras.callbacks.EarlyStopping(patience = 5)
     model_checkpoints = tf.keras.callbacks.ModelCheckpoint('models/checkpoints/', save_best_only = True, save_weights_only = True)
-    log_callback = tf.keras.callbacks.CSVLogger('Logs/backtest_log.log', append = True)
-    my_callbacks = [early_stopping, model_checkpoints, log_callback]
+    date = df.index.max().strftime('%Y%m%d')
+    tensorboard = tf.keras.callbacks.TensorBoard(log_dir = 'Logs/Tensorboard/' + date)
+    my_callbacks = [early_stopping, model_checkpoints, tensorboard]
 
     model.fit(
         X_train, Y_train, 
@@ -208,7 +208,7 @@ def TrainEncoderModel(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, L
         validation_data = (X_test, Y_test), 
         batch_size = BATCH_SIZE, 
         callbacks = my_callbacks,
-        verbose = 1
+        verbose = 0
         )
 
     model.load_weights('models/checkpoints/')

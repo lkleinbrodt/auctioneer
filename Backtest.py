@@ -1,21 +1,19 @@
-import os
-import warnings
 import logging
+import warnings
+import os
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from dateutil.relativedelta import relativedelta
 import alpaca_trade_api as alp
-import pandas_market_calendars as mcal
-import logging
 from pypfopt.efficient_frontier import EfficientFrontier
 from pypfopt.risk_models import CovarianceShrinkage
 from pypfopt.objective_functions import L2_reg
 from pypfopt.discrete_allocation import DiscreteAllocation
-logging.basicConfig(filename = 'Logs/backtest_log.log', level = 'INFO', filemode='w')
+logging.basicConfig(filename = 'Logs/backtest_log.log', level = 'DEBUG', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 
 with open('Data/paper_api_keys.txt') as api_file:
     api_keys = api_file.read().replace('\n', '').split(',')
@@ -32,15 +30,15 @@ END_DATE = '2020-12-01'
 
 MOVEMENT_THRESHOLD = 0
 MODEL_REFRESH_DAYS = 31
-N_DATA_POINTS = 200_000
+N_DATA_POINTS = 7500
 
 STARTING_CASH = 100_000
 MAX_CONCURRENT_SECURITIES = 15
 
-HISTORY_STEPS = 10_000#480
-TARGET_STEPS = 1000#120
+HISTORY_STEPS = 48#480
+TARGET_STEPS = 12#120
 MAX_EPOCHS = 20
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 LEARNING_RATE = .001
 
 ########## END PARAMETERS #############
@@ -76,6 +74,7 @@ def TradingDay(current_day, portfolio, buying_power, api, scalers, model = None,
         data = GetHistoricalData(stocks_to_predict, end_date = current_day, api = api, n_data_points = N_DATA_POINTS)
         logging.debug('Training Data')
         logging.debug(data.tail())
+        logging.info('Starting to train model')
         model, scalers = TrainEncoderModel(data, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, LEARNING_RATE)
         cov_matrix = CovarianceShrinkage(data).ledoit_wolf()
         
