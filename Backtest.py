@@ -12,7 +12,7 @@ from pypfopt.efficient_frontier import EfficientFrontier
 from pypfopt.risk_models import CovarianceShrinkage
 from pypfopt.objective_functions import L2_reg
 from pypfopt.discrete_allocation import DiscreteAllocation
-logging.basicConfig(filename = 'Logs/backtest_log.log', level = 'DEBUG', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename = 'Logs/backtest_log.log', level = 'INFO', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 with open('Data/paper_api_keys.txt') as api_file:
@@ -108,7 +108,7 @@ def TradingDay(current_day, portfolio, buying_power, api, scalers, model = None,
     terminal_prices = {data.columns[i]: predictions[-1,i] for i in range(data.shape[1])}
 
     ef = EfficientFrontier(pd.Series(terminal_prices), cov_matrix)
-    ef.add_objective(L2_reg, gamma = .01)
+    ef.add_objective(L2_reg, gamma = .1)
     weights = ef.max_sharpe()
     cleaned_weights = ef.clean_weights()
 
@@ -116,6 +116,8 @@ def TradingDay(current_day, portfolio, buying_power, api, scalers, model = None,
     portfolio_value = buying_power + np.sum(portfolio['Value'])
     da = DiscreteAllocation(cleaned_weights, pd.Series(current_prices), portfolio_value)
     new_allocation, _ = da.lp_portfolio()
+    for stock in [stock for stock in portfolio['Symbol'].tolist() if stock not in new_allocation.keys()]:
+        new_allocation[stock] = 0
     logging.info('Target Allocation')
     logging.info(new_allocation)
     orders = dict([])
@@ -195,11 +197,19 @@ def Execution(day_of_order, orders, portfolio, buying_power):
             logging.debug('New buying power: ' + str(buying_power))
         portfolio.loc[portfolio['Symbol']==symbol, 'Value'] = price * portfolio.loc[portfolio['Symbol']==symbol, 'Quantity']
         
-    portfolio = portfolio[portfolio['Quantity'] != 0].copy()
+    portfolio = portfolio[portfolio['Quantity'] != 0]
+
     for symbol in next_day_prices.keys():
         portfolio.loc[portfolio['Symbol']==symbol, 'Value'] = next_day_prices[symbol] * portfolio.loc[portfolio['Symbol']==symbol, 'Quantity']
 
     return next_day_prices, portfolio, buying_power
+
+
+####################
+####################
+#################### BEGIN BACKTESTING
+####################
+####################
 
 day = pd.to_datetime(START_DATE)
 end_day = pd.to_datetime(END_DATE)
@@ -228,10 +238,10 @@ while day < end_day:
     logging.info('Working on {}'.format(day.strftime('%Y-%m-%d')))
 
     preds, orders, prices, model, scalers, cov_matrix = TradingDay(day, portfolio, buying_power, api, scalers, model, cov_matrix)
-    logging.info('----Closing prices for the day:' + str(day))
-    logging.info(prices)
-    logging.info('----Predictions')
-    logging.info(preds)
+    logging.debug('----Closing prices for the day:' + str(day))
+    logging.debug(prices)
+    logging.debug('----Predictions')
+    logging.debug(preds)
     logging.info('----Orders for next day open:')
     logging.info(orders)
     
@@ -242,8 +252,8 @@ while day < end_day:
 
     next_day_prices, portfolio, buying_power = Execution(day, orders, portfolio, buying_power)
     
-    logging.info('----Prices at Open of Next Day:')
-    logging.info(next_day_prices)
+    logging.debug('----Prices at Open of Next Day:')
+    logging.debug(next_day_prices)
     logging.info('-----Portfolio:')
     logging.info(portfolio)
     logging.info('Buying Power {}'.format(buying_power))

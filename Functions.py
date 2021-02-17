@@ -80,8 +80,6 @@ def GetDayQuotes(symbols, api, date, open_or_close = 'open'):
         logging.debug('Skipping {}, had missing values for the period.'.format(list(bad_cols)))
     return dict(data.iloc[0])
 
-#%%
-
 def GetLongReturns(symbols_to_consider, api, start, end):
 
     starting_prices = GetDayQuotes(symbols_to_consider, api, start)
@@ -199,6 +197,7 @@ def TrainEncoderModel(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, L
     early_stopping = tf.keras.callbacks.EarlyStopping(patience = 5)
     model_checkpoints = tf.keras.callbacks.ModelCheckpoint('models/checkpoints/', save_best_only = True, save_weights_only = True)
     date = df.index.max().strftime('%Y%m%d')
+    [os.remove(os.path.join('Logs/Tensorboard', f)) for f in os.listdir('Logs/Tensorboard')]
     tensorboard = tf.keras.callbacks.TensorBoard(log_dir = 'Logs/Tensorboard/' + date)
     my_callbacks = [early_stopping, model_checkpoints, tensorboard]
 
