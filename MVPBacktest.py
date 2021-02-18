@@ -1,6 +1,7 @@
 import logging
 import warnings
 import os
+import time
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 from datetime import datetime
@@ -12,7 +13,10 @@ from pypfopt.efficient_frontier import EfficientFrontier
 from pypfopt.risk_models import CovarianceShrinkage
 from pypfopt.objective_functions import L2_reg
 from pypfopt.discrete_allocation import DiscreteAllocation
-logging.basicConfig(filename = 'Logs/backtest_log.log', level = 'INFO', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+from Functions import *
+
+
+logging.basicConfig(filename = 'Logs/MVP/backtest_log.log', level = 'DEBUG', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 with open('Data/paper_api_keys.txt') as api_file:
@@ -21,27 +25,20 @@ with open('Data/paper_api_keys.txt') as api_file:
     
 api = alp.REST(key_id=alpaca_api['APCA_API_KEY_ID'], secret_key = alpaca_api['APCA_API_SECRET_KEY'], base_url=alpaca_api['APCA_API_BASE_URL'])
 
-from Functions import *
 
 ########## PARAMETERS ##############
 
 START_DATE = '2017-01-01'
-END_DATE = '2019-12-31'
+END_DATE = '2021-01-31'
 
-MOVEMENT_THRESHOLD = 0
-N_DATA_POINTS = 7500
+COV_HISTORY = 43_200 # in minutes -> 60 * 8 * 90
 
 STARTING_CASH = 100_000
-MAX_CONCURRENT_SECURITIES = 15
+MAX_CONCURRENT_SECURITIES = 50
+FUND_UNIVERSE = IdentifyStocksOfInterest(method = 'SP')
+N_NEW_PER_DAY = 20
+REFRESH_PERIOD = 7
 
-HISTORY_STEPS = 48#480
-TARGET_STEPS = 12#120
-MAX_EPOCHS = 20
-BATCH_SIZE = 32
-LEARNING_RATE = .001
-
-MODEL_REFRESH_DAYS = [CheckHoliday(x) for x in pd.date_range(START_DATE, END_DATE, freq='BMS')]
-MODEL_REFRESH_DAYS = list(np.random.choice(MODEL_REFRESH_DAYS, int(len(MODEL_REFRESH_DAYS)/3), replace = False))
 ########## END PARAMETERS #############
 
 logging.info('Starting Script: ')
@@ -61,55 +58,28 @@ portfolio['Value'] = portfolio['Value'].astype(float)
 
 ### Define One Day of trading behavior, should take in a date, and output the actions that will be taken
 
-def TradingDay(current_day, portfolio, buying_power, api, scalers, model = None, cov_matrix = None):
-
-    if (current_day in MODEL_REFRESH_DAYS) or (model is None): 
-        portfolio_stocks = portfolio['Symbol'].tolist()
-        if len(portfolio_stocks) > MAX_CONCURRENT_SECURITIES:
-            stocks_to_predict = portfolio_stocks
-        else:
-            soi = IdentifyStocksOfInterest(method = 'handpick')
-            stocks_to_predict = list(set(portfolio_stocks + soi))
-        
-        data = GetHistoricalData(stocks_to_predict, end_date = current_day, api = api, n_data_points = N_DATA_POINTS)
-        logging.debug('Training Data')
-        logging.debug(data.tail())
-        logging.info('Starting to train model')
-        model, scalers = TrainEncoderModel(data, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, LEARNING_RATE)
-        cov_matrix = CovarianceShrinkage(data).ledoit_wolf()
-        
+def TradingDay(current_day, portfolio, buying_power, api):
+    
+    portfolio_stocks = portfolio['Symbol'].tolist()
+    if len(portfolio_stocks) > MAX_CONCURRENT_SECURITIES:
+            soi = portfolio_stocks
     else:
-        soi = list(scalers.keys())
-        stocks_to_predict = list(set(portfolio['Symbol'].tolist() + soi))
-        data = GetHistoricalData(stocks_to_predict, api, day, n_data_points=HISTORY_STEPS)
-
-    stocks_to_predict = [col for col in stocks_to_predict if col in data.columns]
-
-    inference_data = data[-HISTORY_STEPS:].copy()
-    logging.debug('Inference Data:')
-    logging.debug(inference_data.tail())
+        new_stocks = np.random.choice(FUND_UNIVERSE, N_NEW_PER_DAY, replace = False).tolist()
+        soi = list(set(portfolio_stocks + new_stocks))
     
-    current_prices = {data.columns[i]: data.iloc[-1, i] for i in range(data.shape[1])}
+    logging.debug('Pulling Data')
+    stock_prices = GetHistoricalData(soi, api, end_date = current_day, n_data_points = COV_HISTORY, time_interval='minute')
+
+    current_prices = {stock_prices.columns[i]: stock_prices.iloc[-1, i] for i in range(stock_prices.shape[1])}
     
-    for col in inference_data.columns:
-        scaler = scalers[col]
-        norm = scaler.transform(inference_data[col].values.reshape(-1,1))
-        norm = np.reshape(norm, len(norm))
-        inference_data[col] = norm
-    
-    inference_data = np.array(inference_data).reshape((1, inference_data.shape[0], -1))
+    logging.debug('Calculating Covariance')
+    cov_matrix = CovarianceShrinkage(stock_prices).ledoit_wolf()
 
-    predictions = model.predict(inference_data).squeeze() 
+    logging.debug('Calculating Efficient Frontier')
+    ef = EfficientFrontier(None, cov_matrix, weight_bounds = (0,1))
 
-    for i, col in enumerate(data.columns):
-        scaler = scalers[col]
-        predictions[:,i] = scaler.inverse_transform(predictions[:,i].reshape(-1,1)).reshape(-1)
-
-    terminal_prices = {data.columns[i]: predictions[-1,i] for i in range(data.shape[1])}
-
-    ef = EfficientFrontier(pd.Series(terminal_prices), cov_matrix)
-    ef.add_objective(L2_reg, gamma = .1)
-    weights = ef.max_sharpe()
+    logging.debug('Minimizing Volatility')
+    ef.min_volatility()
     cleaned_weights = ef.clean_weights()
 
     ### Reconcile Current Portfolio with Optimal Portfolio
@@ -141,7 +111,7 @@ def TradingDay(current_day, portfolio, buying_power, api, scalers, model = None,
 
         orders[symbol] = {'Side': side, 'Quantity': quantity}
     
-    return predictions, orders, current_prices, model, scalers, cov_matrix
+    return orders, current_prices
 
 
 def Execution(day_of_order, orders, portfolio, buying_power):
@@ -218,13 +188,11 @@ order_history = []
 price_history = []
 portfolio_history = []
 buying_power = STARTING_CASH
-scalers = {}
-model = None
-cov_matrix = None
 
 while day < end_day:
     logging.info('-----------------------------------------------------------')
     logging.info('-----------------------------------------------------------')
+    day_start = datetime.now()
     
     day_ts = pd.Timestamp(day, tz = 'America/New_York')
     calendar = api.get_calendar(start = day_ts.isoformat(), end = (day_ts + relativedelta(days = 1)).isoformat())
@@ -237,11 +205,11 @@ while day < end_day:
 
     logging.info('Working on {}'.format(day.strftime('%Y-%m-%d')))
 
-    preds, orders, prices, model, scalers, cov_matrix = TradingDay(day, portfolio, buying_power, api, scalers, model, cov_matrix)
+    orders, prices = TradingDay(day, portfolio, buying_power, api)
+
     logging.debug('----Closing prices for the day:' + str(day))
     logging.debug(prices)
-    logging.debug('----Predictions')
-    logging.debug(preds)
+
     logging.info('----Orders for next day open:')
     logging.info(orders)
     
@@ -263,7 +231,12 @@ while day < end_day:
     price_history.append(prices)
     portfolio_history.append(portfolio)
 
-    day = day + relativedelta(days = 1)
+    day = day + relativedelta(days = REFRESH_PERIOD)
+    day_end = datetime.now()
+    
+    #API LIMIT is 200 per minute
+    if (day_end - day_start).total_seconds() < 30:
+        time.sleep(20)
 
 logging.info('Final buying power: {}'.format(buying_power))
 logging.info('Final asset value: {}'.format(np.sum(portfolio['Value'])))
@@ -276,7 +249,7 @@ logging.info('-----------------------------------------------------------')
 logging.info('----------Baseline Return')
 logging.info('-----------------------------------------------------------')
 
-baseline = GetLongReturns(IdentifyStocksOfInterest(method = 'handpick'), api, START_DATE, END_DATE)
+baseline = GetLongReturns(IdentifyStocksOfInterest(method = 'sp'), api, START_DATE, END_DATE)
 
 logging.info(baseline)
 
@@ -284,15 +257,11 @@ logging.info(datetime.now())
 
 
 import pickle as pk
-with open('./data/logs/order_history', 'wb') as f:
+with open('./Logs/MVP/order_history', 'wb') as f:
     pk.dump(order_history, f)
 
-with open('./data/logs/price_history', 'wb') as f:
+with open('./Logs/MVP/price_history', 'wb') as f:
     pk.dump(price_history, f)
 
-with open('./data/logs/portfolio_history', 'wb') as f:
+with open('./Logs/MVP/portfolio_history', 'wb') as f:
     pk.dump(portfolio_history, f)
-
-
-# with open('./test_pickle', 'rb') as f:
-#     ok = pk.load(f)
