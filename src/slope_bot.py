@@ -17,11 +17,9 @@ APCA_API_KEY='PKPSF4L3O68TT9B96VQ6'
 APCA_SECRET_KEY='7CVn20cy5ZzLW7BWEVQYTFaDcjvtSYHQvoJ1BPSR'
 
 trading_client = TradingClient(APCA_API_KEY, APCA_SECRET_KEY, paper=True)
-crypto_stream = CryptoDataStream(APCA_API_KEY, APCA_SECRET_KEY, raw_data=True)
+
 
 # Date Variables
-start_date = dt.date.today() - dt.timedelta(days = 60)
-end_date = dt.date.today()
 WINDOW_SIZE = 100
 
 #%%
@@ -124,17 +122,26 @@ def slope_bot():
     # except Exception as e:
     #     print (e)
 
-runs = 0
-from time import sleep
-while True:
-    runs +=1
-    slope_bot()
-    # print(runs)
-    # sleep(30)
+def main():
+    runs = 0
+    from time import sleep
+    while True:
+        runs +=1
+        slope_bot()
+        print(runs)
+        try:
+            sleep(60)
+        except KeyboardInterrupt:
+            return True
+
+if __name__ == '__main__':
+    main()
+
 # #%%
 # async def quote_data_handler(data):
 #     slope_bot()
 # #%%
+# crypto_stream = CryptoDataStream(APCA_API_KEY, APCA_SECRET_KEY, raw_data=True)
 # crypto_stream.subscribe_bars(quote_data_handler, 'BTC//USD','ETH/USD','DOGE/USD','SHIB/USD','MATIC/USD','ALGO/USD','AVAX/USD','LINK/USD','SOL/USD')
 # crypto_stream.run()
 # # %%
