@@ -15,7 +15,7 @@ from pypfopt.discrete_allocation import DiscreteAllocation
 logging.basicConfig(filename = 'Logs/backtest_log.log', level = 'INFO', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
-with open('Data/paper_api_keys.txt') as api_file:
+with open('data/paper_api_keys.txt') as api_file:
     api_keys = api_file.read().replace('\n', '').split(',')
     alpaca_api = {a.split('=')[0]: a.split('=')[1] for a in api_keys}
     
