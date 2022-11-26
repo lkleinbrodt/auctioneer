@@ -1,3 +1,4 @@
+*.pem
 models/*
 logs/*
 data/*

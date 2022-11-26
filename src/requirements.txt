@@ -1,0 +1,6 @@
+pip==22.3.1
+python==3.10.8
+alpaca-py==0.6.1
+numpy==1.23.5
+pandas==1.5.1
+scipy==1.9.3
