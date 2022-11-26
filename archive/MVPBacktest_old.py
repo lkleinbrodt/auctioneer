@@ -29,14 +29,14 @@ api = alp.REST(key_id=alpaca_api['APCA_API_KEY_ID'], secret_key = alpaca_api['AP
 ########## PARAMETERS ##############
 
 START_DATE = '2017-01-01'
-END_DATE = '2021-01-31'
+END_DATE = '2017-03-31'
 
-COV_HISTORY = 43_200 # in minutes -> 60 * 8 * 90
+COV_HISTORY = 20_000 # in minutes -> 60 * 8 * 90
 
 STARTING_CASH = 100_000
-MAX_CONCURRENT_SECURITIES = 50
+MAX_CONCURRENT_SECURITIES = 20
 FUND_UNIVERSE = IdentifyStocksOfInterest(method = 'SP')
-N_NEW_PER_DAY = 20
+N_NEW_PER_DAY = 5
 REFRESH_PERIOD = 7
 
 ########## END PARAMETERS #############
@@ -187,6 +187,7 @@ end_day = pd.to_datetime(END_DATE)
 order_history = []
 price_history = []
 portfolio_history = []
+value_history = []
 buying_power = STARTING_CASH
 
 while day < end_day:
@@ -225,18 +226,20 @@ while day < end_day:
     logging.info('-----Portfolio:')
     logging.info(portfolio)
     logging.info('Buying Power {}'.format(buying_power))
+    portfolio_value = buying_power + np.sum(portfolio['Value'])
     logging.info('Portfolio Value {}'.format(buying_power + np.sum(portfolio['Value'])))
 
     order_history.append(orders)
     price_history.append(prices)
     portfolio_history.append(portfolio)
+    value_history.append(portfolio_value)
 
     day = day + relativedelta(days = REFRESH_PERIOD)
     day_end = datetime.now()
     
     #API LIMIT is 200 per minute
     if (day_end - day_start).total_seconds() < 30:
-        time.sleep(20)
+        time.sleep(60)
 
 logging.info('Final buying power: {}'.format(buying_power))
 logging.info('Final asset value: {}'.format(np.sum(portfolio['Value'])))
