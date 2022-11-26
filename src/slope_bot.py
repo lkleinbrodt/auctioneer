@@ -79,8 +79,8 @@ def slope_bot():
     slopes = df.apply(slope)
     print(slopes)
     
-    buy_symbols = slopes[slopes > 0].index
-    sell_symbols = slopes[slopes < 0].index
+    buy_symbols = slopes[slopes > 0.05].index
+    sell_symbols = slopes[slopes < -0.05].index
     
     for symbol in buy_symbols:
         account_info = trading_client.get_account()
