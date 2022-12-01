@@ -21,6 +21,7 @@ trading_client = TradingClient(APCA_API_KEY, APCA_SECRET_KEY, paper=True)
 
 # Date Variables
 WINDOW_SIZE = 100
+SLEEP_TIME = 60
 
 #%%
 def check_positions(symbol):
@@ -130,7 +131,7 @@ def main():
         slope_bot()
         print(runs)
         try:
-            sleep(60)
+            sleep(SLEEP_TIME)
         except KeyboardInterrupt:
             return True
 

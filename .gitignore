@@ -4,4 +4,5 @@ logs/*
 data/*
 data/
 .env
-.DS_Store
+*.DS_Store
+*__pycache__/

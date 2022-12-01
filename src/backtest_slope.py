@@ -11,7 +11,7 @@ THRESHOLD = 1
 
 
 from auctioneer import *
-
+from dateutil.relativedelta import relativedelta
 import pandas as pd
 from scipy.stats import linregress
 import logging
@@ -24,18 +24,15 @@ logger = logging.getLogger(__name__)
 
 # No keys required for crypto data
 
-
 START_DATE = pd.to_datetime(START_DATE)
 END_DATE = pd.to_datetime(END_DATE)
 
 
-
-from dateutil.relativedelta import relativedelta
-def n_day_momentum(date, portfolio, data, n_days, threshold):
+def n_day_momentum(date, portfolio, data, threshold):
     STRATEGY = 'max'
     # n_days_ago = date + relativedelta(days = n_days)
 
-    rel_data = data.loc[:date].tail(n_days)
+    rel_data = data.loc[:date].tail(N_DAYS)
 
     closes = pd.Series(rel_data['close'].values)
     slope = linregress(closes.index, closes.values)[0]
@@ -66,33 +63,30 @@ def n_day_momentum(date, portfolio, data, n_days, threshold):
         return None
 
 
-def long_return(data):
-    long_portfolio = Portfolio(STARTING_BALANCE, data, {})
-    long_portfolio.execute(data.index[0], {SECURITY: {'action': 'buy', 'amount': 'max'}})
-    return long_portfolio.value()['Total']
 
-def backtest_slope(data, n_days, threshold):
+
+def backtest_slope(data, threshold):
 
     strategy_portfolio = Portfolio(STARTING_BALANCE, data, {})
     
     for i, date in enumerate(data.index):
-        if i < n_days:
+        if i < N_DAYS:
             continue
-        order = n_day_momentum(date, strategy_portfolio, data, n_days, threshold)
+        order = n_day_momentum(date, strategy_portfolio, data, threshold)
         if order is not None:
             strategy_portfolio.execute(date, order)
 
     return strategy_portfolio
         
 
-def windowed_backtest(data, window_size, n_days, threshold, stride = 1):
+def windowed_backtest(data, window_size, threshold, stride = 1):
     results = []
     for i in range(0, data.shape[0]-window_size, stride):
         tmp = data.iloc[i:i+window_size]
-        result = backtest_slope(tmp, n_days, threshold)
+        result = backtest_slope(tmp, threshold)
         log = result.transaction_log_summary()
 
-        long_result = long_return(tmp)
+        long_result = long_return(tmp, STARTING_BALANCE)
         results.append({
             'StartDate': data.index[i], 
             'EndValue': result.value()['Total'],
@@ -118,7 +112,7 @@ def main():
             results_list.append(results)
             i+=1
     backtest_results = pd.concat(results_list)
-    backtest_results.to_csv('backtested_results.csv', index = False)
+    backtest_results.to_csv('backtest_slope_results.csv', index = False)
     logger.info('---END---')
 
 if __name__ == '__main__':
