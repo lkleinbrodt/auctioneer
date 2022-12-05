@@ -20,4 +20,4 @@ jobs:
           aws_secret_access_key: ${{ secrets.AWS_SECRET_KEY }}
           aws_region: us-west-1
           function_name: train_crypto_bot
-          source: src/train_cyrpto_bot.py
+          source: src/train_crypto_bot.py
