@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 # No keys required for crypto data
 
 START_DATE = pd.to_datetime(START_DATE)
+START_DATE = START_DATE.tz_localize('US/Pacific')
 END_DATE = pd.to_datetime(END_DATE)
+END_DATE = END_DATE.tz_localize('US/Pacific')
 
 
 def n_day_momentum(date, portfolio, data, threshold):

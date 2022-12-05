@@ -6,8 +6,11 @@ import pandas as pd
 from datetime import datetime
 import tensorflow as tf
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler
 
 MODELS_PATH = '../data/models/'
+
+### Classes
 
 class Portfolio:
 
@@ -18,14 +21,15 @@ class Portfolio:
         self.transaction_log = []
 
     def value(self, date = None):
-        #only supports one security for now
+
         if date is not None:
-            price = self.data.loc[date]['close']
+            prices = self.data.loc[date]
         else:
-            price = self.data.iloc[-1]['close']
+            prices = self.data.iloc[-1]
         
         aum = 0
-        for security, amount in self.holdings.items():
+        for symbol, amount in self.holdings.items():
+            price = prices.loc[symbol]
             aum += price * amount
         
         out = {
@@ -43,7 +47,6 @@ class Portfolio:
         for security, order in order_dict.items():
             price = self.data.loc[date]['open']
 
-
             if order['action'] == 'buy':
 
                 if order['amount'] == 'max':
@@ -60,16 +63,16 @@ class Portfolio:
 
             elif order['action'] == 'sell':
 
-                if order['amount'] == 'max':
-                    amount = self.holdings.get(security, 0)
-                else:
-                    #TODO: not right
-                    amount = order['amount']# // price
-
-                if self.holdings.get(security, 0) == 0:
+                currently_held = self.holdings.get(security, 0)
+                if  currently_held == 0:
                     continue
-                if amount > self.holdings[security]:
-                    amount = self.holdings[security]
+
+                if order['amount'] == 'max':
+                    amount = currently_held
+                else:
+                    amount = order['amount']
+                    if amount > currently_held:
+                        amount = currently_held
                 
                 self.holdings[security] -= amount
                 self.balance += amount * price
@@ -104,6 +107,9 @@ class Portfolio:
         plt.plot(self.data['close'])
         plt.show()
 
+
+### Pull Data
+
 def pull_data(security, start_date, end_date):
     client = CryptoHistoricalDataClient()
     request_params = CryptoBarsRequest(
@@ -118,9 +124,6 @@ def pull_data(security, start_date, end_date):
     data = bars_df.droplevel('symbol').copy()
 
     return data
-
-
-
 
 def pull_crypto_prices(symbols, start_date, end_date = None, timeframe = 'minute', client = None, column='close'):
 
@@ -167,10 +170,12 @@ def pull_crypto_prices(symbols, start_date, end_date = None, timeframe = 'minute
     #     Returned End: {pend}
     #     """)
 
-    return prices
+    wide_prices = pivot_price_data(prices)
+    return wide_prices
 
 def get_crypto_symbols():
     symbols = ['BTC/USD','ETH/USD','DOGE/USD','SHIB/USD','MATIC/USD','ALGO/USD','AVAX/USD','LINK/USD','SOL/USD']
+    symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
     return symbols
 
 def pivot_price_data(price_data):
@@ -186,7 +191,14 @@ def pivot_price_data(price_data):
     wide_data = wide_data.loc[first_valid_index:]
     return wide_data
 
+
+### Tensorflow
+
 def window_data(df, HISTORY_STEPS, TARGET_STEPS, train_test_split = .9):
+
+    df = df.ffill()
+    df = df.bfill()
+
     def split_series(series, n_past, n_future):
         X, Y = list(), list()
 
@@ -209,31 +221,28 @@ def window_data(df, HISTORY_STEPS, TARGET_STEPS, train_test_split = .9):
         train, test = df[:n_train_samples], df[n_train_samples:]
         
         for col in train.columns:
-            pass
-            # scaler = MinMaxScaler(feature_range=(-1,1))
-            # norm = scaler.fit_transform(train[col].values.reshape(-1,1))
-            # norm = np.reshape(norm, len(norm))
-            # scalers[col] = scaler
-            # train[col] = norm
+            scaler = MinMaxScaler(feature_range=(-1,1))
+            norm = scaler.fit_transform(train[col].values.reshape(-1,1))
+            norm = np.reshape(norm, len(norm))
+            scalers[col] = scaler
+            train[col] = norm
 
         for col in train.columns:
-            pass
-            # scaler = scalers[col]
-            # norm = scaler.transform(test[col].values.reshape(-1,1))
-            # norm = np.reshape(norm, len(norm))
-            # test[col] = norm
+            scaler = scalers[col]
+            norm = scaler.transform(test[col].values.reshape(-1,1))
+            norm = np.reshape(norm, len(norm))
+            test[col] = norm
         
         X_train, Y_train = split_series(train.values, HISTORY_STEPS, TARGET_STEPS)
         X_test, Y_test = split_series(test.values, HISTORY_STEPS, TARGET_STEPS)
         return X_train, Y_train, X_test, Y_test, scalers
     else: 
         for col in df.columns:
-            pass
-            # scaler = MinMaxScaler(feature_range=(-1,1))
-            # norm = scaler.fit_transform(df[col].values.reshape(-1,1))
-            # norm = np.reshape(norm, len(norm))
-            # scalers[col] = scaler
-            # df[col] = norm
+            scaler = MinMaxScaler(feature_range=(-1,1))
+            norm = scaler.fit_transform(df[col].values.reshape(-1,1))
+            norm = np.reshape(norm, len(norm))
+            scalers[col] = scaler
+            df[col] = norm
         X_df, Y_df = split_series(df.values, HISTORY_STEPS, TARGET_STEPS)
         return X_df, Y_df, scalers
 
@@ -258,7 +267,7 @@ def encoder_model(history_steps, target_steps, n_features):
 
 def train_encoder_model(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, LEARNING_RATE):
     
-    X_train, Y_train, X_test, Y_test, scalers = GenerateWindowData(df, HISTORY_STEPS, TARGET_STEPS)
+    X_train, Y_train, X_test, Y_test, scalers = window_data(df, HISTORY_STEPS, TARGET_STEPS)
     n_features = X_train.shape[2]
     
     model = encoder_model(HISTORY_STEPS, TARGET_STEPS, n_features)
@@ -287,7 +296,7 @@ def train_encoder_model(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE,
         validation_data = (X_test, Y_test), 
         batch_size = BATCH_SIZE, 
         callbacks = my_callbacks,
-        verbose = 0
+        verbose = 1
         )
 
     model.load_weights(MODELS_PATH+'checkpoints/')
@@ -297,25 +306,28 @@ def train_encoder_model(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE,
 
 def predict_forward(data, model, history = None):
     #TODO: verify you dont need to scale by history steps
-    #and it might be worth 
+    #and it might be worth it for quick time
     if history is not None:
         inference_data = data[-history:]
 
-    # for col in inference_data.columns:
-    #     scaler = scalers[col]
-    #     norm = scaler.transform(inference_data[col].values.reshape(-1,1))
-    #     norm = np.reshape(norm, len(norm))
-    #     inference_data[col] = norm
+    for col in inference_data.columns:
+        scaler = scalers[col]
+        norm = scaler.transform(inference_data[col].values.reshape(-1,1))
+        norm = np.reshape(norm, len(norm))
+        inference_data[col] = norm
 
     inference_data = np.array(inference_data).reshape((1, inference_data.shape[0], -1))
 
     predictions = model.predict(inference_data).squeeze() 
     
-    # for i, col in enumerate(data.columns):
-    #     scaler = scalers[col]
-    #     predictions[:,i] = scaler.inverse_transform(predictions[:,i].reshape(-1,1)).reshape(-1)
+    for i, col in enumerate(data.columns):
+        scaler = scalers[col]
+        predictions[:,i] = scaler.inverse_transform(predictions[:,i].reshape(-1,1)).reshape(-1)
 
     return predictions
+
+
+### Benchmarks
 
 def long_return(data, starting_balance):
     starting_average = data.bfill().iloc[0].mean()

@@ -4,49 +4,58 @@ import logging
 logging.basicConfig(level = logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+#TODO:
+"""
+1. Initialize a model, not just using the first HISTORY_STEPS 
+2. Model doesnt need to be completely retrained every HISTORY_STEPS, it should just tune the weights
+    although in production it might not be bad idea to do a full retrain
+"""
+
 
 STARTING_BALANCE = 100_000
 START_DATE = "11-01-2022"
 END_DATE = "11-30-2022"
-DATA_PATH = '../minute_crypto_data.csv' #None to pull cryto data
+DATA_PATH = '../data/minute_crypto_data.csv' #None to pull data from API
 
-HISTORY_STEPS = 240#480
-TARGET_STEPS = 30#120
-MAX_EPOCHS = 50
+HISTORY_STEPS = 240
+TARGET_STEPS = 30
+MAX_EPOCHS = 100
 BATCH_SIZE = 32
 LEARNING_RATE = .001
 STARTING_BALANCE = 100_000
 WINDOW_SIZE = 60*24*14
 STRIDE = 60
 
-REFRESH_RATE = 50
+REFRESH_RATE = 60*24*7
 
 #begin
 
 START_DATE = pd.to_datetime(START_DATE)
+START_DATE = START_DATE.tz_localize('US/Pacific')
 END_DATE = pd.to_datetime(END_DATE)
+END_DATE = END_DATE.tz_localize('US/Pacific')
 
 def main():
     logger.info('---START---')
 
     soi = get_crypto_symbols()
-    soi = soi[:3]
+    
 
     if DATA_PATH is not None:
         logger.info(f"Pulling data from: {DATA_PATH}")
         price_data = pd.read_csv(DATA_PATH)
         price_data['timestamp'] = pd.to_datetime(price_data['timestamp'])
-        price_data = price_data[price_data['symbol'].isin(soi)]
-        price_data = price_data.loc[START_DATE:END_DATE]
+        data = pivot_price_data(price_data)
+        data = data[soi]
+        data = data.loc[START_DATE:END_DATE]
+        
     else:
         logger.info("Pulling data from Alpaca API")
-        price_data = pull_crypto_prices(soi, START_DATE, END_DATE, timeframe='day')
-
-    data = pivot_price_data(price_data)
+        data = pull_crypto_prices(soi, START_DATE, END_DATE, timeframe='day')
 
     #TODO: this could be better
     global REFRESH_STEPS
-    REFRESH_STEPS = [data.index[i] for i in range(0, data.shape[0], REFRESH_RATE)]
+    REFRESH_STEPS = [data.index[i] for i in range(REFRESH_RATE, data.shape[0], REFRESH_RATE)]
 
     results = windowed_backtest(data, window_size = WINDOW_SIZE, stride = STRIDE)
 
@@ -81,6 +90,7 @@ def one_day(date, portfolio, data, model, scalers):
     return orders
 
 def backtest(data):
+    logger.info('running backtest')
     portfolio = Portfolio(STARTING_BALANCE, data)
 
     start_offset = max([HISTORY_STEPS, REFRESH_RATE])
@@ -103,6 +113,7 @@ def backtest(data):
     return portfolio
 
 def windowed_backtest(data, window_size, stride = 1):
+    logger.info('Windowed test')
     results = []
     for i in range(0, data.shape[0]-window_size, stride):
         tmp = data.iloc[i:i+window_size]
@@ -121,6 +132,5 @@ def windowed_backtest(data, window_size, stride = 1):
     return pd.DataFrame(results)
 
 
-
-
-
+if __name__ == '__main__':
+    main()

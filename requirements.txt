@@ -1,5 +1,6 @@
 pip==22.3.1
 alpaca-py==0.6.1
+tensorflow
 numpy
 pandas
 matplotlib
