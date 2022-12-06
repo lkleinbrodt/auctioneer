@@ -18,6 +18,20 @@ S3_BUCKET = 'auctioneer1'
 
 MODELS_PATH = '../data/models/'
 
+### Logging
+
+import logging
+
+def create_logger(name, level = 'INFO'):
+    logger = logging.getLogger(name)
+    syslog = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s: %(message)s', datefmt='%H:%M:%S')
+    syslog.setFormatter(formatter)
+    logger.setLevel(level)
+    logger.addHandler(syslog)
+
+    return logger
+
 ### Classes
 
 class Portfolio:
@@ -207,7 +221,8 @@ def pivot_price_data(price_data):
 
 ### Tensorflow
 
-def window_data(df, HISTORY_STEPS, TARGET_STEPS, train_test_split = .9):
+def window_data(df, history_steps, target_steps, train_test_split = .9):
+    feature_range = (-10, 10) #-1,1 led to tiny loss values
 
     df = df.ffill()
     df = df.bfill()
@@ -234,90 +249,36 @@ def window_data(df, HISTORY_STEPS, TARGET_STEPS, train_test_split = .9):
         train, test = df[:n_train_samples], df[n_train_samples:]
         
         for col in train.columns:
-            scaler = MinMaxScaler(feature_range=(-1,1))
-            norm = scaler.fit_transform(train[col].values.reshape(-1,1))
+            scaler = MinMaxScaler(feature_range=feature_range)
+            norm = scaler.fit_transform(train[col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
             scalers[col] = scaler
             train[col] = norm
 
         for col in train.columns:
             scaler = scalers[col]
-            norm = scaler.transform(test[col].values.reshape(-1,1))
+            norm = scaler.transform(test[col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
             test[col] = norm
         
-        X_train, Y_train = split_series(train.values, HISTORY_STEPS, TARGET_STEPS)
-        X_test, Y_test = split_series(test.values, HISTORY_STEPS, TARGET_STEPS)
+        X_train, Y_train = split_series(train.values, history_steps, target_steps)
+        X_test, Y_test = split_series(test.values, history_steps, target_steps)
         return X_train, Y_train, X_test, Y_test, scalers
     else: 
         for col in df.columns:
-            scaler = MinMaxScaler(feature_range=(-1,1))
-            norm = scaler.fit_transform(df[col].values.reshape(-1,1))
+            scaler = MinMaxScaler(feature_range=feature_range)
+            norm = scaler.fit_transform(df[col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
             scalers[col] = scaler
             df[col] = norm
-        X_df, Y_df = split_series(df.values, HISTORY_STEPS, TARGET_STEPS)
+        X_df, Y_df = split_series(df.values, history_steps, target_steps)
         return X_df, Y_df, scalers
 
-def encoder_model(history_steps, target_steps, n_features):
-    enc_inputs = tf.keras.layers.Input(shape = (history_steps, n_features))
-    enc_out1 = tf.keras.layers.LSTM(16, return_sequences = True, return_state = True)(enc_inputs)
-    enc_states1 = enc_out1[1:]
 
-    enc_out2 = tf.keras.layers.LSTM(16, return_state = True)(enc_out1[0])
-    enc_states2 = enc_out2[1:]
 
-    dec_inputs = tf.keras.layers.RepeatVector(target_steps)(enc_out2[0])
 
-    dec_l1 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_inputs, initial_state = enc_states1)
-    dec_l2 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_l1, initial_state = enc_states2)
 
-    dec_out = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_features))(dec_l2)
-
-    model = tf.keras.models.Model(enc_inputs, dec_out)
-
-    return model
-
-def train_encoder_model(df, HISTORY_STEPS, TARGET_STEPS, MAX_EPOCHS, BATCH_SIZE, LEARNING_RATE):
-    
-    X_train, Y_train, X_test, Y_test, scalers = window_data(df, HISTORY_STEPS, TARGET_STEPS)
-    n_features = X_train.shape[2]
-    
-    model = encoder_model(HISTORY_STEPS, TARGET_STEPS, n_features)
-    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        LEARNING_RATE, 
-        decay_steps = int(X_train.shape[0] / BATCH_SIZE) * 2, 
-        decay_rate = .96
-    )
-    
-    model.compile(
-        optimizer = tf.keras.optimizers.Adam(), 
-        loss = tf.keras.losses.Huber(),
-        # learning_rate = lr_schedule
-    )
-
-    early_stopping = tf.keras.callbacks.EarlyStopping(patience = 5)
-    model_checkpoints = tf.keras.callbacks.ModelCheckpoint(MODELS_PATH+'checkpoints/', save_best_only = True, save_weights_only = True)
-    date = df.index.max().strftime('%Y%m%d')
-    #[os.remove(os.path.join('Logs/Tensorboard', f)) for f in os.listdir('Logs/Tensorboard')]
-    tensorboard = tf.keras.callbacks.TensorBoard(log_dir = MODELS_PATH + 'Tensorboard/' + date)
-    my_callbacks = [early_stopping, model_checkpoints]
-
-    model.fit(
-        X_train, Y_train, 
-        epochs = MAX_EPOCHS, 
-        validation_data = (X_test, Y_test), 
-        batch_size = BATCH_SIZE, 
-        callbacks = my_callbacks,
-        verbose = 1
-        )
-
-    model.load_weights(MODELS_PATH+'checkpoints/')
-    model.save(MODELS_PATH+'TrainedModel')
-
-    return model, scalers
-
-def predict_forward(data, model, history = None):
+def predict_forward(data, model, scalers, history = None):
     #TODO: verify you dont need to scale by history steps
     #and it might be worth it for quick time
     if history is not None:
@@ -381,12 +342,11 @@ def load_s3_csv(s3, path):
     s3_object = s3.get_object(Bucket=S3_BUCKET, Key=path)
     contents = s3_object['Body'].read()
     df = pd.read_csv(BytesIO(contents))
-    df = df.set_index('PicturePath')
     return df
 
-def save_s3_csv(s3, df, path):
+def save_s3_csv(s3, df, path, save_index = True):
     buffer = BytesIO()
-    df.to_csv(buffer, index = False)
+    df.to_csv(buffer, index = save_index)
     s3.put_object(Body=buffer.getvalue(), Bucket=S3_BUCKET, Key=path)
     return True
 
@@ -406,3 +366,8 @@ def load_picture_paths(s3):
     objects_generator = get_all_s3_objects(s3, Bucket=S3_BUCKET, Prefix='saved_pics/')
     objects = [a for a in objects_generator]
     return [object['Key'].replace(S3_BUCKET+'/', '') for object in objects]
+
+def upload_directory(s3, path, key):
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            s3.upload_file(os.path.join(root,file),S3_BUCKET,key+'/'+file)
