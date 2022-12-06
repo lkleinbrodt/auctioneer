@@ -1,1 +1,1 @@
-from src.auctioneer import *
+from auctioneer import *

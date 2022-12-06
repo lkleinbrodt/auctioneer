@@ -7,6 +7,14 @@ from datetime import datetime
 import tensorflow as tf
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
+import boto3
+import os
+from io import BytesIO
+from dotenv import load_dotenv
+
+load_dotenv()
+
+S3_BUCKET = 'auctioneer1'
 
 MODELS_PATH = '../data/models/'
 
@@ -158,6 +166,8 @@ def pull_crypto_prices(symbols, start_date, end_date = None, timeframe = 'minute
     if isinstance(symbols, str) | len(symbols) == 1:
         print('dropping symbol index')
         prices = bars_df.droplevel('symbol')
+    else:
+        prices = pivot_price_data(prices.reset_index())
 
     #TODO: cannot compare tz-naive and tz-aware timestamps
     # pstart = prices.index.get_level_values('timestamp').min()
@@ -170,8 +180,7 @@ def pull_crypto_prices(symbols, start_date, end_date = None, timeframe = 'minute
     #     Returned End: {pend}
     #     """)
 
-    wide_prices = pivot_price_data(prices)
-    return wide_prices
+    return prices
 
 def get_crypto_symbols():
     symbols = ['BTC/USD','ETH/USD','DOGE/USD','SHIB/USD','MATIC/USD','ALGO/USD','AVAX/USD','LINK/USD','SOL/USD']
@@ -182,13 +191,17 @@ def pivot_price_data(price_data):
     """Pivots price data from tall to wide format, 
     filters data to only after first timestamp where all symbols have non-NA
     """
+    if price_data.empty:
+        return price_data
+
     wide_data = price_data.set_index('timestamp')
     wide_data = wide_data.pivot(columns='symbol', values = 'close')
-    try:
-        first_valid_index = wide_data.index[wide_data.isna().mean(axis = 1)==0][0]
-    except IndexError as e:
-        raise IndexError(f"No record where all symbols have valid data")
-    wide_data = wide_data.loc[first_valid_index:]
+    # try:
+    #     first_valid_index = wide_data.index[wide_data.isna().mean(axis = 1)==0][0]
+    # except IndexError as e:
+    #     print('WARNING: No record where all symbols have valid data')
+    #     raise IndexError(f"")
+    # wide_data = wide_data.loc[first_valid_index:]
     return wide_data
 
 
@@ -336,3 +349,60 @@ def long_return(data, starting_balance):
     # long_portfolio = Portfolio(STARTING_BALANCE, data, {})
     # long_portfolio.execute(data.index[0], {SECURITY: {'action': 'buy', 'amount': 'max'}})
     # return long_portfolio.value()['Total']
+
+def dollar_cost_average(price_data, starting_balance = 100_000):
+    #This isnt the only way to do it, but it's the way i wrote it first so :)
+    per_day = starting_balance / price_data.shape[0]
+    symbol_per_day = per_day / price_data.shape[1]
+
+    amounts = symbol_per_day / price_data
+    ending_amounts = amounts.sum()
+
+    ending_values = ending_amounts * price_data.iloc[-1]
+    final_value = ending_values.sum()
+
+    return final_value
+
+
+### S3
+
+
+
+def create_s3():
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_KEY'),
+    )
+
+    return s3
+
+def load_s3_csv(s3, path):
+    s3_object = s3.get_object(Bucket=S3_BUCKET, Key=path)
+    contents = s3_object['Body'].read()
+    df = pd.read_csv(BytesIO(contents))
+    df = df.set_index('PicturePath')
+    return df
+
+def save_s3_csv(s3, df, path):
+    buffer = BytesIO()
+    df.to_csv(buffer, index = False)
+    s3.put_object(Body=buffer.getvalue(), Bucket=S3_BUCKET, Key=path)
+    return True
+
+def get_all_s3_objects(s3, **base_kwargs):
+    continuation_token = None
+    while True:
+        list_kwargs = dict(MaxKeys=1000, **base_kwargs)
+        if continuation_token:
+            list_kwargs['ContinuationToken'] = continuation_token
+        response = s3.list_objects_v2(**list_kwargs)
+        yield from response.get('Contents', [])
+        if not response.get('IsTruncated'):  # At the end of the list?
+            break
+        continuation_token = response.get('NextContinuationToken')
+
+def load_picture_paths(s3):
+    objects_generator = get_all_s3_objects(s3, Bucket=S3_BUCKET, Prefix='saved_pics/')
+    objects = [a for a in objects_generator]
+    return [object['Key'].replace(S3_BUCKET+'/', '') for object in objects]
