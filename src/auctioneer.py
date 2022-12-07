@@ -11,6 +11,8 @@ import boto3
 import os
 from io import BytesIO
 from dotenv import load_dotenv
+from tempfile import TemporaryDirectory
+import joblib
 
 load_dotenv()
 
@@ -21,6 +23,9 @@ MODELS_PATH = '../data/models/'
 ### Logging
 
 import logging
+logging.getLogger('boto3').setLevel(logging.CRITICAL)
+logging.getLogger('botocore').setLevel(logging.CRITICAL)
+logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 
 def create_logger(name, level = 'INFO'):
     logger = logging.getLogger(name)
@@ -33,6 +38,7 @@ def create_logger(name, level = 'INFO'):
     return logger
 
 ### Classes
+
 
 class Portfolio:
 
@@ -241,23 +247,23 @@ def window_data(df, history_steps, target_steps, train_test_split = .9):
             Y.append(future)
         return np.array(X), np.array(Y)
     
-    df = df.sort_index().copy()
+    df = df.sort_index()
     n_features = df.shape[1]
     scalers = {}
     if train_test_split > 0:
         n_train_samples = int(df.shape[0] * train_test_split)
-        train, test = df[:n_train_samples], df[n_train_samples:]
+        train, test = df.iloc[:n_train_samples], df.iloc[n_train_samples:]
         
         for col in train.columns:
             scaler = MinMaxScaler(feature_range=feature_range)
-            norm = scaler.fit_transform(train[col].copy().values.reshape(-1,1))
+            norm = scaler.fit_transform(train.loc[:,col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
             scalers[col] = scaler
             train[col] = norm
 
         for col in train.columns:
             scaler = scalers[col]
-            norm = scaler.transform(test[col].copy().values.reshape(-1,1))
+            norm = scaler.transform(test.loc[:,col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
             test[col] = norm
         
@@ -267,7 +273,7 @@ def window_data(df, history_steps, target_steps, train_test_split = .9):
     else: 
         for col in df.columns:
             scaler = MinMaxScaler(feature_range=feature_range)
-            norm = scaler.fit_transform(df[col].copy().values.reshape(-1,1))
+            norm = scaler.fit_transform(df.loc[:,col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
             scalers[col] = scaler
             df[col] = norm
@@ -369,7 +375,60 @@ def load_picture_paths(s3):
     objects = [a for a in objects_generator]
     return [object['Key'].replace(S3_BUCKET+'/', '') for object in objects]
 
-def upload_directory(s3, path, key):
-    for root, dirs, files in os.walk(path):
+def download_s3_directory(s3, s3_directory, local_directory):
+    if local_directory[-1] != '/':
+        local_directory += '/'
+    objects = get_all_s3_objects(s3, Bucket=S3_BUCKET, Prefix=s3_directory)
+    for obj in objects:
+        if not os.path.exists(local_directory+str(os.path.dirname(obj['Key']))):
+            os.makedirs(local_directory+str(os.path.dirname(obj['Key'])))
+        s3.download_file(S3_BUCKET, obj['Key'], local_directory + obj['Key']) # save to same path
+    
+    return True
+
+def upload_s3_directory(s3, local_path, key):
+    for path, subdirs, files in os.walk(local_path):
+        path = path.replace("\\","/")
+        directory_name = path.replace(local_path,"")
         for file in files:
-            s3.upload_file(os.path.join(root,file),S3_BUCKET,key+'/'+file)
+            s3.upload_file(os.path.join(path, file),S3_BUCKET, key+'/'+directory_name+'/'+file)
+
+def delete_s3_directory(s3, key):
+
+    paginator = s3.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=S3_BUCKET, Prefix = key)
+
+    delete_us = dict(Objects=[])
+    for item in pages.search('Contents'):
+        
+        delete_us['Objects'].append(dict(Key=item['Key']))
+
+        # flush once aws limit reached
+        if len(delete_us['Objects']) >= 1000:
+            s3.delete_objects(Bucket=S3_BUCKET, Delete=delete_us)
+            delete_us = dict(Objects=[])
+
+    # flush rest
+    if len(delete_us['Objects']):
+        s3.delete_objects(Bucket=S3_BUCKET, Delete=delete_us)
+
+def save_models_to_s3(s3, model, scalers):
+    with TemporaryDirectory() as tempdir:
+
+        model.save(f"{tempdir}/TrainedModel")
+        joblib.dump(scalers, f"{tempdir}/scalers.gz")
+
+        s3.upload_file(f"{tempdir}/scalers.gz", S3_BUCKET, 'scalers.gz')
+        upload_s3_directory(s3, f"{tempdir}/TrainedModel", 'TrainedModel')
+    
+    return True
+
+def download_model(s3):
+    with TemporaryDirectory() as tempdir:
+        download_s3_directory(s3, 'TrainedModel', f"{tempdir}")
+        model = tf.keras.models.load_model(f"{tempdir}/TrainedModel")
+
+        s3.download_file(S3_BUCKET, 'scalers.gz', f"{tempdir}/scalers.gz")
+        scalers = joblib.load(f"{tempdir}/scalers.gz")
+    
+    return model, scalers

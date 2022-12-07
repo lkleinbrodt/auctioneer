@@ -1,16 +1,17 @@
 from auctioneer import *
-from tempfile import TemporaryDirectory
-import joblib
 
 
-logger = create_logger('crypto_bot')
+
+
+if __name__ == '__main__':
+    logger = create_logger('crypto_bot', 'INFO')
 
 START_DATE = '2022-01-01' #none for full
 END_DATE = '2022-10-01' #none for full
 
 HISTORY_STEPS = 240
 TARGET_STEPS = 30
-MAX_EPOCHS = 100
+MAX_EPOCHS = 50
 BATCH_SIZE = 64
 LEARNING_RATE = .0005
 
@@ -122,16 +123,12 @@ def main():
     )
     logger.info('Done Training model')
 
+    
+    # logger.info('Saving model and scaler locally')
+    # model.save(f"{MODELS_PATH}/TrainedModel")
+    # joblib.dump(scalers, f"{MODELS_PATH}/scalers.gz")
 
-    logger.info('Saving model and scaler')
-    with TemporaryDirectory() as tempdir:
-        logger.info('saving to temp folder')
-        model.save(f"{tempdir}/TrainedModel")
-        joblib.dump(scalers, f"{tempdir}/scalers.gz")
-
-        logger.info('uploading to s3')
-        s3.upload_file(f"{tempdir}/scalers.gz", S3_BUCKET, 'scalers.gz')
-        upload_directory(s3, f"{tempdir}/TrainedModel", 'TrainedModel')
+    save_models_to_s3(s3, model, scalers)
     
     logger.info('---END---')
 
