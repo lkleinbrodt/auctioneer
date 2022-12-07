@@ -1,10 +1,6 @@
 from auctioneer import *
 
-
-
-
-if __name__ == '__main__':
-    logger = create_logger('crypto_bot', 'INFO')
+logger = create_logger('crypto_bot', 'INFO')
 
 START_DATE = '2022-01-01' #none for full
 END_DATE = '2022-10-01' #none for full
@@ -12,7 +8,7 @@ END_DATE = '2022-10-01' #none for full
 HISTORY_STEPS = 240
 TARGET_STEPS = 30
 MAX_EPOCHS = 50
-BATCH_SIZE = 64
+BATCH_SIZE = 8
 LEARNING_RATE = .0005
 
 MODELS_PATH = '../models/'
@@ -87,7 +83,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
     )
 
     early_stopping = tf.keras.callbacks.EarlyStopping(patience = 4, restore_best_weights = True)
-    # model_checkpoints = tf.keras.callbacks.ModelCheckpoint(MODELS_PATH+'checkpoints/', save_best_only = True, save_weights_only = True)
+    model_checkpoints = tf.keras.callbacks.ModelCheckpoint(MODELS_PATH+'checkpoints/', save_best_only = True, save_weights_only = True)
     date = df.index.max().strftime('%Y%m%d')
     #[os.remove(os.path.join('Logs/Tensorboard', f)) for f in os.listdir('Logs/Tensorboard')]
     # tensorboard = tf.keras.callbacks.TensorBoard(log_dir = MODELS_PATH + 'Tensorboard/' + date)
@@ -106,7 +102,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
             gc.collect()
 
     memory_callback = MemoryUsageCallbackExtended()
-    my_callbacks = [early_stopping, memory_callback]
+    my_callbacks = [early_stopping, memory_callback, model_checkpoints]
 
     model.fit(
         X_train, Y_train, 
