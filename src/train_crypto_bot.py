@@ -2,30 +2,38 @@ from auctioneer import *
 from tempfile import TemporaryDirectory
 import joblib
 
+
 logger = create_logger('crypto_bot')
 
-END_DATE = '2022-10-01'
+START_DATE = '2022-01-01' #none for full
+END_DATE = '2021-03-01' #none for full
 
 HISTORY_STEPS = 240
 TARGET_STEPS = 30
-MAX_EPOCHS = 100
+MAX_EPOCHS = 2
 BATCH_SIZE = 32
-LEARNING_RATE = .001
+LEARNING_RATE = .0005
 
 MODELS_PATH = '../models/'
 
-def load_data(s3, end_date=None):
+def load_data(s3, start_date, end_date=None):
     logger.info('Reading data')
 
     data = load_s3_csv(s3, 'minute_crypto_prices.csv')
     data['timestamp'] = pd.to_datetime(data['timestamp'])
     data = data.set_index('timestamp')
 
+    if start_date is not None:
+        logger.info(f'Original shape: {data.shape}')
+        start_date = pd.to_datetime(start_date).tz_localize('US/Pacific')
+        data = data.loc[start_date:]
+        logger.info(f'After clipping start date: {data.shape}')
+
     if end_date is not None:
         logger.info(f'Original shape: {data.shape}')
         end_date = pd.to_datetime(end_date).tz_localize('US/Pacific')
         data = data.loc[:end_date]
-        logger.info(f'After clipping shape: {data.shape}')
+        logger.info(f'After clipping end date: {data.shape}')
         
     return data
 
@@ -98,7 +106,7 @@ def main():
     logger.info('---START---')
     s3 = create_s3()
 
-    data = load_data(s3, END_DATE)
+    data = load_data(s3, START_DATE, END_DATE)
 
     model, scalers = train_encoder_model(
         df = data,
