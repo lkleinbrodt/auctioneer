@@ -6,7 +6,7 @@ import joblib
 logger = create_logger('crypto_bot')
 
 START_DATE = '2022-01-01' #none for full
-END_DATE = '2021-03-01' #none for full
+END_DATE = '2022-10-01' #none for full
 
 HISTORY_STEPS = 240
 TARGET_STEPS = 30
