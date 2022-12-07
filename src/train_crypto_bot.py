@@ -87,11 +87,26 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
     )
 
     early_stopping = tf.keras.callbacks.EarlyStopping(patience = 4, restore_best_weights = True)
-    model_checkpoints = tf.keras.callbacks.ModelCheckpoint(MODELS_PATH+'checkpoints/', save_best_only = True, save_weights_only = True)
+    # model_checkpoints = tf.keras.callbacks.ModelCheckpoint(MODELS_PATH+'checkpoints/', save_best_only = True, save_weights_only = True)
     date = df.index.max().strftime('%Y%m%d')
     #[os.remove(os.path.join('Logs/Tensorboard', f)) for f in os.listdir('Logs/Tensorboard')]
-    tensorboard = tf.keras.callbacks.TensorBoard(log_dir = MODELS_PATH + 'Tensorboard/' + date)
-    my_callbacks = [early_stopping]
+    # tensorboard = tf.keras.callbacks.TensorBoard(log_dir = MODELS_PATH + 'Tensorboard/' + date)
+    import gc
+    import psutil
+
+    class MemoryUsageCallbackExtended(tf.keras.callbacks.Callback):
+        '''Monitor memory usage on epoch begin and end, collect garbage'''
+
+        def on_epoch_begin(self,epoch,logs=None):
+            print('**Epoch {}**'.format(epoch))
+            print('Memory usage on epoch begin: {}'.format(psutil.Process(os.getpid()).memory_info().rss))
+
+        def on_epoch_end(self,epoch,logs=None):
+            print('Memory usage on epoch end:   {}'.format(psutil.Process(os.getpid()).memory_info().rss))
+            gc.collect()
+
+    memory_callback = MemoryUsageCallbackExtended()
+    my_callbacks = [early_stopping, memory_callback]
 
     model.fit(
         X_train, Y_train, 
