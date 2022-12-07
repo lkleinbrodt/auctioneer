@@ -22,6 +22,7 @@ def load_data(s3, start_date, end_date=None):
     data = load_s3_csv(s3, 'minute_crypto_prices.csv')
     data['timestamp'] = pd.to_datetime(data['timestamp'])
     data = data.set_index('timestamp')
+    data = data.sort_index()
 
     if start_date is not None:
         logger.info(f'Original shape: {data.shape}')
@@ -43,16 +44,16 @@ if not os.path.isdir(MODELS_PATH):
 
 def encoder_model(history_steps, target_steps, n_features):
     enc_inputs = tf.keras.layers.Input(shape = (history_steps, n_features))
-    enc_out1 = tf.keras.layers.LSTM(16, return_sequences = True, return_state = True)(enc_inputs)
+    enc_out1 = tf.keras.layers.LSTM(8, return_sequences = True, return_state = True)(enc_inputs)
     enc_states1 = enc_out1[1:]
 
-    enc_out2 = tf.keras.layers.LSTM(16, return_state = True)(enc_out1[0])
+    enc_out2 = tf.keras.layers.LSTM(8, return_state = True)(enc_out1[0])
     enc_states2 = enc_out2[1:]
 
     dec_inputs = tf.keras.layers.RepeatVector(target_steps)(enc_out2[0])
 
-    dec_l1 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_inputs, initial_state = enc_states1)
-    dec_l2 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_l1, initial_state = enc_states2)
+    dec_l1 = tf.keras.layers.LSTM(8, return_sequences = True)(dec_inputs, initial_state = enc_states1)
+    dec_l2 = tf.keras.layers.LSTM(8, return_sequences = True)(dec_l1, initial_state = enc_states2)
 
     dec_out = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_features))(dec_l2)
 
