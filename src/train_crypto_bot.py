@@ -10,8 +10,8 @@ END_DATE = '2022-10-01' #none for full
 
 HISTORY_STEPS = 240
 TARGET_STEPS = 30
-MAX_EPOCHS = 2
-BATCH_SIZE = 32
+MAX_EPOCHS = 100
+BATCH_SIZE = 64
 LEARNING_RATE = .0005
 
 MODELS_PATH = '../models/'
@@ -44,16 +44,16 @@ if not os.path.isdir(MODELS_PATH):
 
 def encoder_model(history_steps, target_steps, n_features):
     enc_inputs = tf.keras.layers.Input(shape = (history_steps, n_features))
-    enc_out1 = tf.keras.layers.LSTM(8, return_sequences = True, return_state = True)(enc_inputs)
+    enc_out1 = tf.keras.layers.LSTM(16, return_sequences = True, return_state = True)(enc_inputs)
     enc_states1 = enc_out1[1:]
 
-    enc_out2 = tf.keras.layers.LSTM(8, return_state = True)(enc_out1[0])
+    enc_out2 = tf.keras.layers.LSTM(16, return_state = True)(enc_out1[0])
     enc_states2 = enc_out2[1:]
 
     dec_inputs = tf.keras.layers.RepeatVector(target_steps)(enc_out2[0])
 
-    dec_l1 = tf.keras.layers.LSTM(8, return_sequences = True)(dec_inputs, initial_state = enc_states1)
-    dec_l2 = tf.keras.layers.LSTM(8, return_sequences = True)(dec_l1, initial_state = enc_states2)
+    dec_l1 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_inputs, initial_state = enc_states1)
+    dec_l2 = tf.keras.layers.LSTM(16, return_sequences = True)(dec_l1, initial_state = enc_states2)
 
     dec_out = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(n_features))(dec_l2)
 
@@ -65,8 +65,11 @@ def encoder_model(history_steps, target_steps, n_features):
 
 def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size, learning_rate):
     logger.info('Training Model')
+
     X_train, Y_train, X_test, Y_test, scalers = window_data(df, history_steps, target_steps)
+
     logger.info('Done windowing data')
+
     n_features = X_train.shape[2]
     
     model = encoder_model(history_steps, target_steps, n_features)
@@ -82,7 +85,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
         # learning_rate = lr_schedule
     )
 
-    early_stopping = tf.keras.callbacks.EarlyStopping(patience = 5, restore_best_weights = True)
+    early_stopping = tf.keras.callbacks.EarlyStopping(patience = 4, restore_best_weights = True)
     model_checkpoints = tf.keras.callbacks.ModelCheckpoint(MODELS_PATH+'checkpoints/', save_best_only = True, save_weights_only = True)
     date = df.index.max().strftime('%Y%m%d')
     #[os.remove(os.path.join('Logs/Tensorboard', f)) for f in os.listdir('Logs/Tensorboard')]

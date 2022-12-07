@@ -278,11 +278,13 @@ def window_data(df, history_steps, target_steps, train_test_split = .9):
 
 
 
-def predict_forward(data, model, scalers, history = None):
+def predict_forward(inference_data, model, scalers, history = None):
     #TODO: verify you dont need to scale by history steps
     #and it might be worth it for quick time
+    columns = inference_data.columns
+
     if history is not None:
-        inference_data = data[-history:]
+        inference_data = inference_data[-history:]
 
     for col in inference_data.columns:
         scaler = scalers[col]
@@ -294,7 +296,7 @@ def predict_forward(data, model, scalers, history = None):
 
     predictions = model.predict(inference_data).squeeze() 
     
-    for i, col in enumerate(data.columns):
+    for i, col in enumerate(columns):
         scaler = scalers[col]
         predictions[:,i] = scaler.inverse_transform(predictions[:,i].reshape(-1,1)).reshape(-1)
 
