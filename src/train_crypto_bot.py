@@ -4,12 +4,12 @@ import gc
 logger = create_logger('crypto_bot', 'INFO')
 
 START_DATE = '2022-01-01' #none for full
-END_DATE = '2022-01-15' #none for full
+END_DATE = '2022-10-01' #none for full
 
 HISTORY_STEPS = 240
 TARGET_STEPS = 30
 MAX_EPOCHS = 3
-BATCH_SIZE = 32
+BATCH_SIZE = 128
 LEARNING_RATE = .0005
 
 MODELS_PATH = '../models/'
