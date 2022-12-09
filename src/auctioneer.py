@@ -73,7 +73,7 @@ class Portfolio:
             return 
         #just goes in order of order
         for security, order in order_dict.items():
-            price = self.data.loc[date]['open']
+            price = self.data.loc[date, security]
 
             if order['action'] == 'buy':
 
@@ -290,17 +290,17 @@ def predict_forward(inference_data, model, scalers, history = None):
     columns = inference_data.columns
 
     if history is not None:
-        inference_data = inference_data[-history:]
+        inference_data = inference_data.iloc[-history:]
 
     for col in inference_data.columns:
         scaler = scalers[col]
-        norm = scaler.transform(inference_data[col].values.reshape(-1,1))
+        norm = scaler.transform(inference_data.loc[:,col].copy().values.reshape(-1,1))
         norm = np.reshape(norm, len(norm))
-        inference_data[col] = norm
+        inference_data.loc[:,col] = norm
 
     inference_data = np.array(inference_data).reshape((1, inference_data.shape[0], -1))
 
-    predictions = model.predict(inference_data).squeeze() 
+    predictions = model.predict(inference_data, verbose=0).squeeze() 
     
     for i, col in enumerate(columns):
         scaler = scalers[col]
