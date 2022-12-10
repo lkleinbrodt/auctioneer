@@ -66,7 +66,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
 
     X_train, Y_train, X_test, Y_test, scalers = window_data(df, history_steps, target_steps)
 
-    
+    print(X_train.shape)
 
     logger.info('Done windowing data')
 
