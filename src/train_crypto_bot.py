@@ -6,8 +6,8 @@ logger = create_logger('crypto_bot', 'INFO')
 START_DATE = '2022-06-01' #none for full
 END_DATE = '2022-12-01' #none for full
 
-HISTORY_STEPS = 60 * 24
-TARGET_STEPS = 60
+HISTORY_STEPS = 60 * 12
+TARGET_STEPS = 10
 MAX_EPOCHS = 100
 BATCH_SIZE = 32
 LEARNING_RATE = .0005
