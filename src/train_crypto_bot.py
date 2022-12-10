@@ -9,7 +9,7 @@ END_DATE = '2022-12-01' #none for full
 HISTORY_STEPS = 60 * 24
 TARGET_STEPS = 60
 MAX_EPOCHS = 100
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 LEARNING_RATE = .0005
 
 MODELS_PATH = './models/'
@@ -65,6 +65,8 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
     logger.info('Training Model')
 
     X_train, Y_train, X_test, Y_test, scalers = window_data(df, history_steps, target_steps)
+
+    del df
 
     logger.info('Done windowing data')
 
