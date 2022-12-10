@@ -13,6 +13,7 @@ from io import BytesIO
 from dotenv import load_dotenv
 from tempfile import TemporaryDirectory
 import joblib
+pd.options.mode.chained_assignment = None
 
 load_dotenv()
 
@@ -271,7 +272,7 @@ def window_data(df, history_steps, target_steps, train_test_split = .9):
             scaler = scalers[col]
             norm = scaler.transform(test.loc[:,col].copy().values.reshape(-1,1))
             norm = np.reshape(norm, len(norm))
-            test[col] = norm
+            test.loc[:,col] = norm
         
         X_train, Y_train = split_series(train.values, history_steps, target_steps)
         X_test, Y_test = split_series(test.values, history_steps, target_steps)

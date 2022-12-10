@@ -109,6 +109,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
     # memory_callback = MemoryUsageCallbackExtended()
     my_callbacks = [early_stopping, model_checkpoints]
 
+    logger.info('fitting model')
     model.fit(
         X_train, Y_train, 
         epochs = max_epochs, 
