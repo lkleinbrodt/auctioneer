@@ -87,7 +87,7 @@ class Portfolio:
                         amount = self.balance // price
                     self.holdings[security] = self.holdings.get(security, 0) + amount
                     self.balance -= amount * price
-                    self.transaction_log += [{'date': date, 'action': 'buy', 'amount': amount, 'value': amount*price}]
+                    self.transaction_log += [{'symbol': security, 'date': date, 'action': 'buy', 'amount': amount, 'value': amount*price}]
 
             elif order['action'] == 'sell':
 
@@ -104,36 +104,42 @@ class Portfolio:
                 
                 self.holdings[security] -= amount
                 self.balance += amount * price
-                self.transaction_log += [{'date': date, 'action': 'sell', 'amount': amount, 'value': amount*price}]
+                self.transaction_log += [{'symbol': security, 'date': date, 'action': 'sell', 'amount': amount, 'value': amount*price}]
 
     def transaction_log_summary(self):
-        buys = []
-        sells = []
-        for order in self.transaction_log:
-            if order['action'] == 'buy':
-                buys += [order['value']]
-            if order['action'] == 'sell':
-                sells += [order['value']]
+        tlog = {}
+        for symbol in self.data.columns:
+            buys = []
+            sells = []
+            for order in self.transaction_log:
+                if order['action'] == 'buy':
+                    buys += [order['value']]
+                if order['action'] == 'sell':
+                    sells += [order['value']]
+            summary = {
+                'buys': (len(buys), sum(buys)), 
+                'sells': (len(sells), sum(sells))
+            }
+            tlog[symbol] = summary
         
-        # print(f"""
-        # {len(buys)+len(sells)} total transactions.
-        # {len(buys)} buy orders, totalling {sum(buys)}.
-        # {len(sells)} sell orders, totalling {sum(sells)}.
-        # """)
-        return {'buys': (len(buys), sum(buys)), 'sells': (len(sells), sum(sells))}
+        return tlog
 
     def plot_transactions(self):
         transaction_log = self.transaction_log
 
-        for t in transaction_log:
-            if t['action'] == 'buy':
-                color = 'green'
-            else:
-                color='red'
-            plt.axvline(t['date'], color=color, alpha = .05)
-            
-        plt.plot(self.data['close'])
-        plt.show()
+        for symbol in self.data.columns:
+
+            for t in transaction_log:
+                if t['symbol'] == symbol:
+                    if t['action'] == 'buy':
+                        color = 'green'
+                    else:
+                        color='red'
+                    plt.axvline(t['date'], color=color, alpha = .05)
+            plt.plot(self.data[symbol])
+            plt.show()
+        
+        
 
 
 ### Pull Data
@@ -228,7 +234,7 @@ def pivot_price_data(price_data):
 ### Tensorflow
 
 def window_data(df, history_steps, target_steps, train_test_split = .9):
-    feature_range = (-10, 10) #-1,1 led to tiny loss values
+    feature_range = (-20, 20) #-1,1 led to tiny loss values
 
     df = df.ffill()
     df = df.bfill()
@@ -287,22 +293,23 @@ def window_data(df, history_steps, target_steps, train_test_split = .9):
 def predict_forward(inference_data, model, scalers, history = None):
     #TODO: verify you dont need to scale by history steps
     #and it might be worth it for quick time
-    columns = inference_data.columns
 
     if history is not None:
-        inference_data = inference_data.iloc[-history:]
+        df = inference_data.iloc[-history:].copy()
+    else:
+        df = inference_data.copy()
 
     for col in inference_data.columns:
         scaler = scalers[col]
-        norm = scaler.transform(inference_data.loc[:,col].copy().values.reshape(-1,1))
+        norm = scaler.transform(df.loc[:,col].copy().values.reshape(-1,1))
         norm = np.reshape(norm, len(norm))
-        inference_data.loc[:,col] = norm
+        df.loc[:,col] = norm
 
-    inference_data = np.array(inference_data).reshape((1, inference_data.shape[0], -1))
+    df = np.array(df).reshape((1, df.shape[0], -1))
 
-    predictions = model.predict(inference_data, verbose=0).squeeze() 
+    predictions = model.predict(df, verbose=0).squeeze() 
     
-    for i, col in enumerate(columns):
+    for i, col in enumerate(inference_data.columns):
         scaler = scalers[col]
         predictions[:,i] = scaler.inverse_transform(predictions[:,i].reshape(-1,1)).reshape(-1)
 
@@ -421,6 +428,7 @@ def save_models_to_s3(s3, model, scalers):
         s3.upload_file(f"{tempdir}/scalers.gz", S3_BUCKET, 'scalers.gz')
         upload_s3_directory(s3, f"{tempdir}/TrainedModel", 'TrainedModel')
     
+    logger.info('saved to s3')
     return True
 
 def download_model(s3):

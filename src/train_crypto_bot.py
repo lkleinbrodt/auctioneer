@@ -3,16 +3,16 @@ import gc
 
 logger = create_logger('crypto_bot', 'INFO')
 
-START_DATE = '2022-01-01' #none for full
-END_DATE = '2022-10-01' #none for full
+START_DATE = '2022-06-01' #none for full
+END_DATE = '2022-12-01' #none for full
 
-HISTORY_STEPS = 240
-TARGET_STEPS = 30
-MAX_EPOCHS = 3
+HISTORY_STEPS = 60 * 24
+TARGET_STEPS = 60
+MAX_EPOCHS = 100
 BATCH_SIZE = 128
 LEARNING_RATE = .0005
 
-MODELS_PATH = '../models/'
+MODELS_PATH = './models/'
 
 def load_data(s3, start_date=None, end_date=None):
     logger.info('Reading data')
