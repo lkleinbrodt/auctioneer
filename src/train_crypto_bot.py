@@ -66,7 +66,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
 
     X_train, Y_train, X_test, Y_test, scalers = window_data(df, history_steps, target_steps)
 
-    del df
+    
 
     logger.info('Done windowing data')
 
@@ -91,7 +91,7 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
     checkpoint_dir = os.path.dirname(checkpoint_path)
 
     model_checkpoints = tf.keras.callbacks.ModelCheckpoint(checkpoint_path, save_best_only = True, save_weights_only = True)
-    date = df.index.max().strftime('%Y%m%d')
+    # date = df.index.max().strftime('%Y%m%d')
     #[os.remove(os.path.join('Logs/Tensorboard', f)) for f in os.listdir('Logs/Tensorboard')]
     # tensorboard = tf.keras.callbacks.TensorBoard(log_dir = MODELS_PATH + 'Tensorboard/' + date)
     
@@ -110,6 +110,8 @@ def train_encoder_model(df, history_steps, target_steps, max_epochs, batch_size,
 
     # memory_callback = MemoryUsageCallbackExtended()
     my_callbacks = [early_stopping, model_checkpoints]
+
+    del df
 
     logger.info('fitting model')
     model.fit(
