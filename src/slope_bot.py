@@ -57,9 +57,9 @@ class SlopeBot:
         
         dfl = []
         
-        now = datetime.now() - relativedelta(days = 365) #TODO: alpaca doesnt give recent data... alpaca sucks
+        now = datetime.now() #- relativedelta(days = 365) #TODO: alpaca doesnt give recent data... alpaca sucks
         start_date = pd.to_datetime(now) - relativedelta(minutes = self.window_size)
-        end_date = pd.to_datetime(now)
+        end_date = None#pd.to_datetime(now)
         
         dfl = []
         for symbol in self.symbols:

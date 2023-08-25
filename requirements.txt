@@ -8,3 +8,4 @@ scipy
 boto3
 python-dotenv
 scikit-learn
+ipykernel
