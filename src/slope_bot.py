@@ -1,4 +1,6 @@
 #%%
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from auctioneer import *
 import pandas as pd
 from alpaca.data import CryptoDataStream
@@ -9,140 +11,156 @@ from scipy.stats import linregress
 import numpy as np
 import pandas as pd
 import datetime as dt
-
+from logging import Logger
+logger = Logger('main')
 import os
-# APCA_API_KEY = os.getenv('APCA_API_KEY')
-# APCA_SECRET_KEY = os.getenv('APCA_SECRET_KEY')
-APCA_API_KEY='PKPSF4L3O68TT9B96VQ6'
-APCA_SECRET_KEY='7CVn20cy5ZzLW7BWEVQYTFaDcjvtSYHQvoJ1BPSR'
+import dotenv
+dotenv.load_dotenv()
 
-trading_client = TradingClient(APCA_API_KEY, APCA_SECRET_KEY, paper=True)
-
-
-# Date Variables
-WINDOW_SIZE = 100
-SLEEP_TIME = 60
-
-#%%
-def check_positions(symbol):
-    positions = trading_client.get_all_positions()
-    if symbol in str(positions):
-        return 1
-    return 0
-
-def pull_closes(security, start_date, end_date):
-    
-    client = CryptoHistoricalDataClient()
-    request_params = CryptoBarsRequest(
-        symbol_or_symbols=[security],
-        timeframe=TimeFrame.Minute,
-        start=start_date,
-        end=end_date,
-        limit = WINDOW_SIZE,
-    )
-
-    bars_df = client.get_crypto_bars(request_params).df
-    data = bars_df.droplevel('symbol').copy()['close']
-
-    return data
-#%%
-
-#%%
-def slope_bot():
-    # print('running')
-    # try:
-
-    symbols = ['BTC/USD','ETH/USD','DOGE/USD','SHIB/USD','MATIC/USD','ALGO/USD','AVAX/USD','LINK/USD','SOL/USD']
-
-    dfl = []
-    from datetime import datetime
-    from dateutil.relativedelta import relativedelta
-    
-    start_date = pd.to_datetime(datetime.now()) - relativedelta(minutes = WINDOW_SIZE)
-    end_date = pd.to_datetime(datetime.now())
-
-    for symbol in symbols:
+class SlopeBot:
+    def __init__(self, window_size = 100, threshold: float = .05):
+        self.window_size = window_size
+        self.threshold = threshold
+        
+        self.symbols = ['BTC/USD','ETH/USD','DOGE/USD','SHIB/USD','MATIC/USD','ALGO/USD','AVAX/USD','LINK/USD','SOL/USD']
+        
         try:
-            data = pull_closes(symbol, start_date, end_date)
-            data = pd.DataFrame(data).rename(columns={"close": str(symbol)})
-            dfl.append(data)
-        except:
-            pass
+            APCA_API_KEY = os.environ['APCA_API_KEY']
+            APCA_SECRET_KEY = os.environ['APCA_SECRET_KEY']
+        except KeyError:
+            raise KeyError("Must set APCA_API_KEY and APCA_SECRET_KEY in environments variable")
+        self.trading_client =  TradingClient(APCA_API_KEY, APCA_SECRET_KEY, paper=True)
 
-    df = pd.concat(dfl, axis = 1)
+    def check_positions(self, symbol: str):
+        positions = self.trading_client.get_all_positions()
+        if symbol in str(positions):
+            return 1
+        return 0
 
-    def slope(x):
+    def pull_closes(self, security: str, start_date: datetime, end_date: datetime):
+        
+        client = CryptoHistoricalDataClient()
+        request_params = CryptoBarsRequest(
+            symbol_or_symbols=[security],
+            timeframe=TimeFrame.Minute,
+            start=start_date,
+            end=end_date,
+            limit = self.window_size,
+        )
+
+        bars_df = client.get_crypto_bars(request_params).df
+        data = bars_df.droplevel('symbol').copy()['close']
+
+        return data
+    
+    def get_recent_data(self):
+        
+        dfl = []
+        
+        now = datetime.now() - relativedelta(days = 365) #TODO: alpaca doesnt give recent data... alpaca sucks
+        start_date = pd.to_datetime(now) - relativedelta(minutes = self.window_size)
+        end_date = pd.to_datetime(now)
+        
+        dfl = []
+        for symbol in self.symbols:
+            try:
+                data = self.pull_closes(symbol, start_date, end_date)
+                data = pd.DataFrame(data).rename(columns={"close": str(symbol)})
+                dfl.append(data)
+            except Exception as e:
+                logger.error(e)
+                pass
+        
+        df = pd.concat(dfl, axis = 1)
+        
+        return df
+    
+    def slope(self, x):
         x = x[~x.isna()]
         if len(x) > 0:
             return linregress(x.reset_index().index, x.values)[0]
         else:
             return 0
-    slopes = df.apply(slope)
-    print(slopes)
-    
-    buy_symbols = slopes[slopes > 0.05].index
-    sell_symbols = slopes[slopes < -0.05].index
-    
-    for symbol in buy_symbols:
-        account_info = trading_client.get_account()
-        balance = float(account_info.non_marginable_buying_power)
-        price = df[symbol].dropna().iloc[-1]
-        amount = (balance/50)# / price
-
-        if amount > 1:
-            market_order_data = MarketOrderRequest(
-                symbol = symbol,
-                notional=amount,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.GTC
-            )
-            trading_client.submit_order(
-                order_data=market_order_data)
-            print(f"Bought {symbol} at approx. {price}")
-
-    positions = trading_client.get_all_positions()
-    positions = {x.symbol.replace('USD', '/USD'): x.qty for x in positions}
-    for symbol in sell_symbols:
         
-        qty = float(positions.get(symbol, 0))
+    def sell(self, sell_symbols, data = None):
+        # positions = self.trading_client.get_all_positions() it's broken. alpaca sucks
+        # positions = {x.symbol.replace('USD', '/USD'): x.qty for x in positions}
+        for symbol in sell_symbols:
+            response = self.trading_client.get(f"/positions/{symbol}")
+            
+            # qty = round(float(positions.get(symbol, 0)), 2)
+            qty = float(response['qty'])
 
-        if qty > 0:
-                price = df[symbol].dropna().iloc[-1]
+            if qty > 0:
+                    
+                    market_order_data = MarketOrderRequest(
+                        symbol = symbol,
+                        qty=qty,
+                        side=OrderSide.SELL,
+                        time_in_force=TimeInForce.GTC
+                    )
+                    self.trading_client.submit_order(
+                        order_data=market_order_data
+                    )
+                    if data is not None:
+                        price = data[symbol].dropna().iloc[-1]
+                    else:
+                        price = '--'
+                    print(f"Sold {symbol} at approx. {price}")
 
+    def buy(self, buy_symbols, data = None):
+        for symbol in buy_symbols:
+            account_info = self.trading_client.get_account()
+            balance = float(account_info.non_marginable_buying_power)
+            
+            amount = round(balance/50, 2)# / price
+
+            if amount > 0:
                 market_order_data = MarketOrderRequest(
                     symbol = symbol,
-                    qty=qty,
-                    side=OrderSide.SELL,
+                    notional=amount,
+                    side=OrderSide.BUY,
                     time_in_force=TimeInForce.GTC
                 )
-                trading_client.submit_order(
-                    order_data=market_order_data)
-                print(f"Sold {symbol} at approx. {price}")
-        
+                self.trading_client.submit_order(
+                    order_data=market_order_data
+                )
 
-    # except Exception as e:
-    #     print (e)
+                if data is not None:
+                    price = data[symbol].dropna().iloc[-1]
+                else:
+                    price = '--'
+                print(f"Bought {amount} {symbol} at approx. {price}")
+        
+    def act(self):
+        
+        
+        data = self.get_recent_data()
+
+        slopes = data.apply(self.slope)
+        # print(slopes)
+        
+        buy_symbols = slopes[slopes > self.threshold].index
+        sell_symbols = slopes[slopes < -self.threshold].index
+        
+        self.sell(sell_symbols, data)
+        self.buy(buy_symbols, data)
 
 def main():
+    slope_bot = SlopeBot(
+        window_size=100,
+        threshold = .05
+    )
     runs = 0
     from time import sleep
     while True:
         runs +=1
-        slope_bot()
+        slope_bot.act()
         print(runs)
         try:
-            sleep(SLEEP_TIME)
+            sleep(5)
         except KeyboardInterrupt:
             return True
 
 if __name__ == '__main__':
     main()
-
-# #%%
-# async def quote_data_handler(data):
-#     slope_bot()
-# #%%
-# crypto_stream = CryptoDataStream(APCA_API_KEY, APCA_SECRET_KEY, raw_data=True)
-# crypto_stream.subscribe_bars(quote_data_handler, 'BTC//USD','ETH/USD','DOGE/USD','SHIB/USD','MATIC/USD','ALGO/USD','AVAX/USD','LINK/USD','SOL/USD')
-# crypto_stream.run()
-# # %%
