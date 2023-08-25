@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import datetime as dt
 from logging import Logger
+import dataloader
 
 logger = Logger("main")
 import os
@@ -21,21 +22,25 @@ dotenv.load_dotenv()
 
 
 class SlopeBot:
-    def __init__(self, window_size=100, threshold: float = 0.05):
+    def __init__(self, window_size=100, threshold: float = 0.05, symbol = None):
+        raise NotImplemented('Use SlopeStrategy')
         self.window_size = window_size
         self.threshold = threshold
+        self.dataloader = dataloader.AlpacaAPI()
 
-        self.symbols = [
-            "BTC/USD",
-            "ETH/USD",
-            "DOGE/USD",
-            "SHIB/USD",
-            "MATIC/USD",
-            "ALGO/USD",
-            "AVAX/USD",
-            "LINK/USD",
-            "SOL/USD",
-        ]
+        if symbol is None:
+            self.symbols =['SPY']
+            # [
+            #     "SPY",
+            #     "GLD",
+            #     "TLT",
+            #     "TSLA",
+            # ]
+        else:
+            self.symbols = [symbol]
+        
+        self.quote_history = pd.DataFrame(dtype=float, columns=self.symbols)
+        self.quote_history.index.name = 'Time'
 
         try:
             APCA_API_KEY = os.environ["APCA_API_KEY"]
@@ -52,43 +57,26 @@ class SlopeBot:
             return 1
         return 0
 
-    def pull_closes(self, security: str, start_date: datetime, end_date: datetime):
-        client = CryptoHistoricalDataClient()
-        request_params = CryptoBarsRequest(
-            symbol_or_symbols=[security],
-            timeframe=TimeFrame.Minute,
-            start=start_date,
-            end=end_date,
-            limit=self.window_size,
-        )
-
-        bars_df = client.get_crypto_bars(request_params).df
-        data = bars_df.droplevel("symbol").copy()["close"]
-
-        return data
-
-    def get_recent_data(self):
-        dfl = []
-
-        now = (
-            datetime.now()
-        )  # - relativedelta(days = 365) #TODO: alpaca doesnt give recent data... alpaca sucks
-        start_date = pd.to_datetime(now) - relativedelta(minutes=self.window_size)
-        end_date = None  # pd.to_datetime(now)
-
-        dfl = []
-        for symbol in self.symbols:
-            try:
-                data = self.pull_closes(symbol, start_date, end_date)
-                data = pd.DataFrame(data).rename(columns={"close": str(symbol)})
-                dfl.append(data)
-            except Exception as e:
-                logger.error(e)
-                pass
-
-        df = pd.concat(dfl, axis=1)
-
-        return df
+    # def get_recent_data(self):
+        
+    #     symbols = self.symbols
+    #     symbols = [self.dataloader.alpaca_to_coin[symbol] for symbol in symbols]
+    #     now = datetime.utcnow().replace(second=0, microsecond=0)
+    #     start_date = now - relativedelta(seconds = 100_000)
+    #     df = self.dataloader.get_historical_prices(symbols, time_start = start_date)
+    #     df.columns = df.columns.map(self.dataloader.coin_to_alpaca)
+    #     return df
+    
+    def get_current_data(self, backtest_feed = None):
+        
+        #back from using COINAPI
+        # symbols = self.symbols
+        # symbols = [self.dataloader.alpaca_to_coin[symbol] for symbol in symbols]
+        
+        current_quotes = self.dataloader.get_current_quotes(self.symbols)
+        series = pd.Series(current_quotes)
+        self.quote_history.loc[datetime.now()] = series
+        #TODO: drop after you get to window_size
 
     def slope(self, x):
         x = x[~x.isna()]
@@ -132,7 +120,7 @@ class SlopeBot:
                     symbol=symbol,
                     notional=amount,
                     side=OrderSide.BUY,
-                    time_in_force=TimeInForce.GTC,
+                    time_in_force=TimeInForce.GTC, #TODO: not GTC
                 )
                 self.trading_client.submit_order(order_data=market_order_data)
 
@@ -142,8 +130,15 @@ class SlopeBot:
                     price = "--"
                 print(f"Bought {amount} {symbol} at approx. {price}")
 
-    def act(self):
-        data = self.get_recent_data()
+    def act(self, backtest_feed = None):
+        if backtest_feed is not None:
+            self.quote_history = backtest_feed
+        else:
+            self.get_current_data()
+        data = self.quote_history
+        if data.shape[0] < self.window_size:
+            print(f'Skipping, only have access to: {data.shape[0]} records')
+            return
 
         slopes = data.apply(self.slope)
         # print(slopes)
@@ -169,6 +164,11 @@ def main():
         except KeyboardInterrupt:
             return True
 
-
+#%%
+bot = SlopeBot(5)
+bot.act()
+#%%
 if __name__ == "__main__":
     main()
+
+# %%
