@@ -1,6 +1,7 @@
 import pandas as pd
 from scipy.stats import linregress
 import backtrader as bt
+import math
 
 class CrossoverStrategy:
     def __init__(self, short_window: int, long_window: int):
