@@ -20,10 +20,10 @@ import dotenv
 
 dotenv.load_dotenv()
 
+raise NotImplementedError()
 
 class SlopeBot:
     def __init__(self, window_size=100, threshold: float = 0.05, symbol = None):
-        raise NotImplemented('Use SlopeStrategy')
         self.window_size = window_size
         self.threshold = threshold
         self.dataloader = dataloader.AlpacaAPI()
@@ -163,10 +163,6 @@ def main():
             sleep(5)
         except KeyboardInterrupt:
             return True
-
-#%%
-bot = SlopeBot(5)
-bot.act()
 #%%
 if __name__ == "__main__":
     main()
