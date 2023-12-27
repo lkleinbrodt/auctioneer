@@ -45,7 +45,7 @@ def get_time_series():
 
     # Normalize the 'price' column using MinMaxScaler
     scaler = StandardScaler()
-    df['price_normalized'] = scaler.fit_transform(df['close'].values.reshape(-1, 1)) * 100
+    df['price_normalized'] = scaler.fit_transform(df['close'].values.reshape(-1, 1)) * 10
     
     time_series = df['price_normalized'].values.astype('float32')
     
@@ -56,7 +56,6 @@ def split_time_series(time_series):
     
     train_size = int(len(time_series) * 0.8)
     val_size = int(len(time_series) * 0.15)
-    test_size = len(time_series) - train_size - val_size
 
     train, val, test = np.split(time_series, [train_size, train_size+val_size])
     
@@ -113,6 +112,25 @@ class LSTM(nn.Module):
         torch.save(self.state_dict(), path)
         with open(path.replace('.pt', '_startup_params.json'), 'w') as f:
             json.dump(self.startup_params, f)
+            
+    def predict(self, x):
+        #for some reason this crashes if not on the cpu?
+        
+        l = []
+        preds = []
+        self.eval()
+        self = self.to('cpu')
+        with torch.no_grad():
+            for i in range(len(x) - self.input_size):
+                tensor = x[i:i+self.input_size]
+                tensor = torch.tensor(np.array(tensor), dtype = torch.float32)
+                tensor = tensor.view(-1,self.input_size).to('cpu')
+                pred = self(tensor)
+                # pred = pred.tonumpy()
+                preds.append(pred)
+        
+        self = self.to(DEVICE)
+        return np.array(preds).squeeze()
         
     
 def load_model_from_params(path):
@@ -184,7 +202,7 @@ def main():
             
             train_loss += loss.item() * X_batch.size(0)
             batch_counter += 1
-            logger.info(f'Epoch {epoch}, batch {batch_counter}, train loss: {loss.item()}')
+            # logger.info(f'Epoch {epoch}, batch {batch_counter}, train loss: {loss.item()}')
         
         train_loss /= len(train_loader.dataset)
 
@@ -213,6 +231,12 @@ def main():
             except:
                 logger.exception('Unable to save model to s3')
             logger.info('Done saving model to s3')
+            
+            test_preds = model.predict(test)
+            pred_df = pd.DataFrame({'actual': test})
+            pred_df.loc[model.input_size:, 'preds'] = test_preds
+            s3.write_csv(pred_df, f'models/{OUTPUT_NAME}/test_preds.csv', index = False)
+            logger.info('Saved test preds...')
         else:
             early_stop_count += 1
             

@@ -15,10 +15,13 @@ import datetime
 
 logger = create_logger(__name__, file = ROOT_DIR/'data'/'logs'/'pull_price_data.log')
 
+OUTPUT_DIR = ROOT_DIR/ 'data/top_10'
+os.mkdir(OUTPUT_DIR)
+
 client = Client()
 trader = Trader(client)
 
-START_DATE = datetime.datetime(2023, 6, 1)
+START_DATE = datetime.datetime(2020, 1, 1)
 END_DATE = datetime.datetime(2023, 12, 24)
 GRANULARITY = 'ONE_MINUTE'
 
@@ -37,7 +40,7 @@ def get_ids():
 
     adj_volumes = volumes * prices
 
-    rel_ids = adj_volumes.sort_values().tail(50).index.tolist()
+    rel_ids = adj_volumes.sort_values().tail(10).index.tolist()
     
     return rel_ids
 
@@ -68,7 +71,7 @@ def batch_job(rel_ids, start, end, granularity):
         )
 
         price_data.to_parquet(
-            ROOT_DIR / 'data' / f"top_100_{granularity}_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}.parquet",
+            OUTPUT_DIR / f"{granularity}_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}.parquet",
             index=True
         )
     except:
