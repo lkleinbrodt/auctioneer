@@ -38,9 +38,9 @@ def get_time_series():
     logger.info('Loading data...')
     s3 = S3Client()
     # df = pd.read_parquet(ROOT_DIR/'data/top_10/BTC-USD.parquet')
-    df = pd.read_parquet(ROOT_DIR/'data/BTC-USD_15m.parquet')
-    # df = s3.read_csv('BTC-USD-minute.csv')
-    # df = df.set_index('start').sort_index()
+    # df = pd.read_parquet(ROOT_DIR/'data/BTC-USD_15m.parquet')
+    df = s3.read_csv('BTC-USD_15m.csv')
+    df = df.set_index('start').sort_index()
 
     #TODO: find missing time periods and fill
     

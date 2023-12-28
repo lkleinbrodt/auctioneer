@@ -13,3 +13,4 @@ pyarrow
 transformers
 scikit-learn
 boto3
+torch
