@@ -34,32 +34,51 @@ import os
 if not os.path.exists(ROOT_DIR / 'data' / 'models'):
     os.makedirs(ROOT_DIR / 'data' / 'models')
 
-
 def get_time_series():
     logger.info('Loading data...')
+    s3 = S3Client()
+    # df = pd.read_parquet(ROOT_DIR/'data/top_10/BTC-USD.parquet')
+    df = pd.read_parquet(ROOT_DIR/'data/BTC-USD_15m.parquet')
+    # df = s3.read_csv('BTC-USD-minute.csv')
+    # df = df.set_index('start').sort_index()
 
-    df = pd.read_parquet(ROOT_DIR/'data/btc_price.parquet')
-    df['start'] = pd.to_datetime(df['start'], unit='s')
-
-    df.sort_values('start', inplace=True)
-
-    # Normalize the 'price' column using MinMaxScaler
-    scaler = StandardScaler()
-    df['price_normalized'] = scaler.fit_transform(df['close'].values.reshape(-1, 1)) * 10
+    #TODO: find missing time periods and fill
     
-    time_series = df['price_normalized'].values.astype('float32')
-    
+    time_series = df['close'].values.reshape(-1, 1)
     return time_series
 
-def split_time_series(time_series):
+def normalize_ts(ts):
+    scaler = StandardScaler()
+    return scaler.fit_transform(ts) * 10
+    
+
+# def get_time_series():
+#     logger.info('Loading data...')
+
+#     df = pd.read_parquet(ROOT_DIR/'data/btc_price.parquet')
+#     df['start'] = pd.to_datetime(df['start'], unit='s')
+
+#     df.sort_values('start', inplace=True)
+
+#     # Normalize the 'price' column using MinMaxScaler
+    # scaler = StandardScaler()
+    # df['price_normalized'] = scaler.fit_transform(df['close'].values.reshape(-1, 1)) * 10
+    
+#     time_series = df['price_normalized'].values.astype('float32')
+    
+#     return time_series
+
+def split_time_series_sequentially(time_series, train_frac = .85, val_frac = .1):
     logger.info('Splitting data...')
     
-    train_size = int(len(time_series) * 0.8)
-    val_size = int(len(time_series) * 0.15)
+    train_size = int(len(time_series) * train_frac)
+    val_size = int(len(time_series) * val_frac)
 
     train, val, test = np.split(time_series, [train_size, train_size+val_size])
     
     return train, val, test
+
+
 
 def create_dataset(dataset, window_size=1, prediction_window=1):
     """Transform a time series into a prediction dataset
@@ -81,8 +100,38 @@ def create_dataset(dataset, window_size=1, prediction_window=1):
     
     return X,y
 
+import random
+
+
+def create_random_datasets(time_series, window_size=1, prediction_window=1, val_frac=.15):
+    "is this a valid way to create a random dataset? LOL"
+    X_train, y_train = [], []
+    X_val, y_val = [], []
+
+    for i in range(len(time_series)-window_size-prediction_window):
+        feature = time_series[i:i+window_size]
+        target = time_series[i+window_size+prediction_window]
+        if random.random() < val_frac:
+            X_val.append(feature)
+            y_val.append(target)
+        else:
+            X_train.append(feature)
+            y_train.append(target)
+            
+    X_train = torch.tensor(np.array(X_train), dtype=torch.float32)
+    X_train = X_train.view(-1, window_size).to(DEVICE)
+    y_train = torch.tensor(np.array(y_train), dtype=torch.float32)
+    y_train = y_train.view(-1, 1).to(DEVICE)
+    X_val = torch.tensor(np.array(X_val), dtype=torch.float32)
+    X_val = X_val.view(-1, window_size).to(DEVICE)
+    y_val = torch.tensor(np.array(y_val), dtype=torch.float32)
+    y_val = y_val.view(-1, 1).to(DEVICE)
+
+    
+    return X_train, y_train, X_val, y_val
+    
 class LSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, prediction_window):
         super().__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, batch_first =True)
         self.fc = nn.Linear(hidden_size, output_size)
@@ -95,6 +144,7 @@ class LSTM(nn.Module):
             'input_size': input_size,
             'hidden_size': hidden_size,
             'output_size': output_size,
+            'prediction_window': prediction_window,
         }
         
 
@@ -149,26 +199,26 @@ def load_model_from_params(path):
 def main():
     s3 = S3Client()
 
-    time_series = get_time_series() 
-    train, val, test = split_time_series(time_series)
+    time_series = get_time_series()
+    time_series = normalize_ts(time_series)
+    
+    test_frac = .05
+    time_series, holdout = np.split(time_series, [int(len(time_series) * (1 - test_frac))])
     
     logger.info('Creating datasets...')
-    X_train, y_train = create_dataset(train, window_size=WINDOW_SIZE, prediction_window=PREDICTION_WINDOW)
-    X_val, y_val = create_dataset(val, window_size=WINDOW_SIZE, prediction_window=PREDICTION_WINDOW)
+    X_train, y_train, X_val, y_val = create_random_datasets(time_series,window_size=WINDOW_SIZE, prediction_window=PREDICTION_WINDOW)
     
     hidden_size = 32
     output_size = 1  # Predicting 'price_normalized'
 
     # Initialize the LSTM model
-    model = LSTM(WINDOW_SIZE, hidden_size, output_size)
+    model = LSTM(WINDOW_SIZE, hidden_size, output_size, PREDICTION_WINDOW)
     model.to(DEVICE)
     
     optimizer = optim.Adam(model.parameters())
     loss_fn = nn.MSELoss()
     train_loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=BATCH_SIZE)
     val_loader = data.DataLoader(data.TensorDataset(X_val, y_val), shuffle=False, batch_size=128)
- 
- 
 
     n_epochs = 2000
     early_stop_count = 0
@@ -187,7 +237,6 @@ def main():
         val_loss = 0.0
 
         model.train()
-        
         
         for X_batch, y_batch in train_loader:
             X_batch = X_batch.to(DEVICE)
@@ -232,9 +281,9 @@ def main():
                 logger.exception('Unable to save model to s3')
             logger.info('Done saving model to s3')
             
-            test_preds = model.predict(test)
-            pred_df = pd.DataFrame({'actual': test})
-            pred_df.loc[model.input_size:, 'preds'] = test_preds
+            test_preds = model.predict(holdout.squeeze())
+            pred_df = pd.DataFrame({'actual': holdout.squeeze()[PREDICTION_WINDOW:]})
+            pred_df.loc[PREDICTION_WINDOW:, 'preds'] = test_preds
             s3.write_csv(pred_df, f'models/{OUTPUT_NAME}/test_preds.csv', index = False)
             logger.info('Saved test preds...')
         else:

@@ -41,3 +41,13 @@ def create_logger(name: str, level: str = 'INFO', file: Optional[str] = None) ->
             
     return logger
 
+GRANULARITY_TO_SECONDS = {
+    'ONE_MINUTE': 60,
+    'FIVE_MINUTE': 60 * 5,
+    'FIFTEEN_MINUTE': 60 * 15,
+    'THIRTY_MINUTE': 60 * 30,
+    'ONE_HOUR': 60 * 60,
+    'TWO_HOUR': 60 * 60 * 2,
+    'SIX_HOUR': 60 * 60 * 6,
+    'ONE_DAY': 60 * 60 * 24
+}
