@@ -6,6 +6,9 @@ import json
 import pandas as pd
 import yaml
 import torch
+import os
+import zipfile
+import boto3
 
 class S3Client:
     def __init__(self):
@@ -82,3 +85,16 @@ class S3Client:
         self.save_json(model.startup_params, path.replace('.pt', '_startup_params.json'))
         
         return True
+
+    def upload_compressed_directory(self, local_path, s3_path):
+        assert os.path.isdir(local_path), f"{local_path} is not a directory"
+        assert s3_path.endswith('.zip'), f"{s3_path} must end with .zip"
+        # Create a temporary zip file
+        zip_file_path = "/tmp/compressed.zip"
+        with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(local_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    zipf.write(file_path, os.path.relpath(file_path, local_path))
+                    
+        self.upload_file(zip_file_path, s3_path)

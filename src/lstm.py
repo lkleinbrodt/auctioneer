@@ -13,9 +13,13 @@ import torch.optim as optim
 import torch.utils.data as data
 import random
 import optuna
+import os
+import json
+import datetime
 
 from config import *
 from dataloader import load_price_data
+import pytz
 
 PRODUCT_ID = 'ETH-USD'
 GRANULARITY = 'FIFTEEN_MINUTE'
@@ -35,8 +39,7 @@ else:
 
 logger.info(f'Using: {DEVICE}')
 
-import os
-import json
+
 if not os.path.exists(ROOT_DIR / 'data' / 'models'):
     os.makedirs(ROOT_DIR / 'data' / 'models')
 
@@ -449,5 +452,11 @@ if __name__ == '__main__':
             logger.exception('Optuna failed')
             continue
         
-    with open(ROOT_DIR/'data/lstm_training_results.json', 'w') as f:
+    with open(ROOT_DIR/'data/models/lstm_training_results.json', 'w') as f:
         json.dump(best_results, f)
+
+    if USE_S3:
+        s3 = S3Client()
+        pacific_tz = pytz.timezone('US/Pacific')
+        timestamp = datetime.datetime.now(pacific_tz).strftime("%Y%m%d_%H%M")
+        s3.upload_compressed_directory(ROOT_DIR/'data/models', f'training_results_{timestamp}.zip')
