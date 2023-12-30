@@ -64,6 +64,6 @@ EOF
 # #terminate the instance:
 
 # # lol at this but hey it works!
-# # output=$(vastai show instances --raw)
-# # instance_id=$(python -c "import sys, json; data = json.load(sys.stdin); print(data[0]['id'] if data else '')" <<< "$output")
-# # vastai reboot instance $instance_id
+output=$(vastai show instances --raw)
+instance_id=$(python -c "import sys, json; data = json.load(sys.stdin); print(data[0]['id'] if data else '')" <<< "$output")
+vastai destroy instance $instance_id

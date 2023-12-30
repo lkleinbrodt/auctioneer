@@ -260,7 +260,7 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
     #TODO: LR decay
     
     loss_fn = nn.MSELoss()
-    n_epochs = 2000
+    n_epochs = 100 #TODO: should be longer but i want to have some models to work with
     early_stop_count = 0
     patience = 20
     min_val_loss = float('inf')
@@ -446,18 +446,31 @@ def non_optuna():
 if __name__ == '__main__':
     # non_optuna()
     best_results = {}
+    with open(ROOT_DIR/'data/models/best_trials.json', 'w') as f:
+        json.dump(best_results, f)
+        
     for product in ['BTC-USD', 'ETH-USD', 'SOL-USD', 'MATIC-USD', 'LINK-USD']:
         try:
             study = optuna.create_study(direction = 'minimize')
-            study.optimize(lambda trial: objective(trial, product), n_trials = 20)
-            logger.info(f"Best trial for {product}: {study.best_trial.number}")
-            best_results[product] = study.best_trial.number
+            
+            def save_best_trial(study, trial):
+                #TODO: have this extract the appropriate model and save it properly
+                with open(ROOT_DIR/'data/models/best_trials.json', 'r') as f:
+                    best_results = json.load(f)
+                best_results[product] = study.best_trial.number
+                with open(ROOT_DIR/'data/models/best_trials.json', 'w') as f:
+                    json.dump(best_results, f)
+                if USE_S3:
+                    s3 = S3Client()
+                    s3.upload_file(ROOT_DIR/'data/models/best_trials.json', 'models/best_trials.json')
+
+            study.optimize(lambda trial: objective(trial, product), n_trials = 3, callbacks=[save_best_trial])
+            
         except:
             logger.exception('Optuna failed')
             continue
         
-    with open(ROOT_DIR/'data/models/lstm_training_results.json', 'w') as f:
-        json.dump(best_results, f)
+    
 
     if USE_S3:
         s3 = S3Client()
