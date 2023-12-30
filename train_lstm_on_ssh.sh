@@ -22,10 +22,9 @@ for part in "${ssh_parts[@]}"; do
         esac
     fi
 done
-
+# apt -y install python3-venv && \
 commands=(
     "
-    apt -y install python3-venv && \
     cd /workspace/ && \
     if [ ! -d auctioneer ] ; then
         echo "Cloning auctioneer repo"
@@ -33,7 +32,7 @@ commands=(
     fi && \
     cd /workspace/auctioneer && \
     git pull && \
-    python3 -m venv venv && \
+    python3.10 -m venv venv && \
     source venv/bin/activate && \
     pip3 install -r requirements.txt
     "
@@ -53,7 +52,7 @@ commands=(
     "
     cd /workspace/auctioneer && \
     source venv/bin/activate && \
-    python3 src/lstm.py
+    python3.10 src/lstm.py
     "
 )
 

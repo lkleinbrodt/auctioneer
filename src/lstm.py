@@ -243,9 +243,9 @@ def create_random_target_datasets(returns, targets, window_size, val_frac = .05)
 
 def define_model(trial):
         
-    hidden_size = trial.suggest_int('hidden_size', 16, 128)
+    hidden_size = trial.suggest_categorical('hidden_size', [16, 32, 64, 128, 256])
     num_layers = trial.suggest_int('num_layers', 1, 4)
-    dropout = trial.suggest_float('dropout', 0, .5)
+    dropout = trial.suggest_float('dropout', 0, .5, step = .05)
     model = LSTM(
         input_size = 1, 
         hidden_size = hidden_size, 
@@ -262,7 +262,7 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
     loss_fn = nn.MSELoss()
     n_epochs = 2000
     early_stop_count = 0
-    patience = 50
+    patience = 20
     min_val_loss = float('inf')
 
     train_losses = []
@@ -318,6 +318,7 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
             logger.info("Epoch %d: train RMSE %.4f, val RMSE %.4f" % (epoch, train_loss, val_loss))
             model.eval()
             model.save(output_dir/'lstm_best.pt')
+
             # try:
             #     s3.save_model(model, f'models/{output_name}/lstm_best.pt')
             # except:
@@ -372,14 +373,13 @@ def objective(trial, product_id):
     
     model = define_model(trial)
     # logger.info(f"Model Size: {count_parameters(model)}")
-    
-    batch_size = trial.suggest_int('batch_size', 8, 128)
+    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128])
     train_loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=batch_size)
     val_loader = data.DataLoader(data.TensorDataset(X_val, y_val), shuffle=False, batch_size=64)
     
     optimizer = optim.Adam(
         model.parameters(),
-        lr = trial.suggest_float('lr', 1e-5, 1e-1),
+        lr = trial.suggest_categorical('lr', [1e-5, 1e-4, 1e-3, 1e-2]),
     )
     
     min_val_loss, best_epoch = train(model, optimizer, train_loader, val_loader, output_dir, returns_holdout)
@@ -388,6 +388,10 @@ def objective(trial, product_id):
     
     if trial.should_prune():
         raise optuna.exceptions.TrialPruned()
+    
+    if USE_S3:
+        s3 = S3Client()
+        s3.upload_compressed_directory(output_dir, f'models/{output_name}/{trial.number}.zip')
     
     return min_val_loss
         
