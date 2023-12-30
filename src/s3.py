@@ -50,6 +50,11 @@ class S3Client:
     
     def save_json(self, data, path):
         self.s3.put_object(Body = json.dumps(data), Bucket=self.bucket, Key = path)
+    
+    def load_json(self, path):
+        s3_object = self.s3.get_object(Bucket=self.bucket, Key=path)
+        contents = s3_object["Body"].read()
+        return json.loads(contents)
 
     def save_yaml(self, obj, path):
         buffer = StringIO()
@@ -67,4 +72,3 @@ class S3Client:
         self.save_json(model.startup_params, path.replace('.pt', '_startup_params.json'))
         
         return True
-        

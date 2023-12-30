@@ -214,6 +214,14 @@ def portfolio_vol(weights, covmat):
     """
     return (weights.T @ covmat @ weights) ** (0.5)
 
+def negative_sortino(weights, riskfree_rate, expected_returns, historic_returns):
+
+    future_returns = portfolio_return(weights, expected_returns)
+    hist_returns = portfolio_return(weights, historic_returns.T)
+    semi_dev = semideviation(hist_returns)
+
+    return -(future_returns - riskfree_rate) / semi_dev
+
 
 def plot_ef2(n_points, er, cov, style=".-"):
     if er.shape[0] != 2 or er.shape[0] != 2:
@@ -788,3 +796,75 @@ def drawdown_allocator(psp_r, ghp_r, maxdd, m=3):
         peak_value = np.maximum(peak_value, account_value)
         w_history.iloc[step] = psp_w
     return w_history
+
+
+def _is_positive_semidefinite(matrix):
+    """
+    Helper function to check if a given matrix is positive semidefinite.
+    Any method that requires inverting the covariance matrix will struggle
+    with a non-positive semidefinite matrix
+
+    :param matrix: (covariance) matrix to test
+    :type matrix: np.ndarray, pd.DataFrame
+    :return: whether matrix is positive semidefinite
+    :rtype: bool
+    """
+    try:
+        # Significantly more efficient than checking eigenvalues (stackoverflow.com/questions/16266720)
+        np.linalg.cholesky(matrix + 1e-16 * np.eye(len(matrix)))
+        return True
+    except np.linalg.LinAlgError:
+        return False
+
+
+def fix_nonpositive_semidefinite(matrix, fix_method="spectral"):
+    """
+    Check if a covariance matrix is positive semidefinite, and if not, fix it
+    with the chosen method.
+
+    The ``spectral`` method sets negative eigenvalues to zero then rebuilds the matrix,
+    while the ``diag`` method adds a small positive value to the diagonal.
+
+    :param matrix: raw covariance matrix (may not be PSD)
+    :type matrix: pd.DataFrame
+    :param fix_method: {"spectral", "diag"}, defaults to "spectral"
+    :type fix_method: str, optional
+    :raises NotImplementedError: if a method is passed that isn't implemented
+    :return: positive semidefinite covariance matrix
+    :rtype: pd.DataFrame
+    """
+    if _is_positive_semidefinite(matrix):
+        return matrix
+
+    # Eigendecomposition
+    q, V = np.linalg.eigh(matrix)
+
+    if fix_method == "spectral":
+        # Remove negative eigenvalues
+        q = np.where(q > 0, q, 0)
+        # Reconstruct matrix
+        fixed_matrix = V @ np.diag(q) @ V.T
+    elif fix_method == "diag":
+        min_eig = np.min(q)
+        fixed_matrix = matrix - 1.1 * min_eig * np.eye(len(matrix))
+    else:
+        raise NotImplementedError("Method {} not implemented".format(fix_method))
+
+    if not _is_positive_semidefinite(fixed_matrix):  # pragma: no cover
+        print(
+            "Could not fix matrix. Please try a different risk model.", UserWarning
+        )
+
+    # Rebuild labels if provided
+    if isinstance(matrix, pd.DataFrame):
+        tickers = matrix.index
+        return pd.DataFrame(fixed_matrix, index=tickers, columns=tickers)
+    else:
+        return fixed_matrix
+    
+def semicovariance(returns, benchmark, frequency):
+    drops = np.fmin(returns - benchmark, 0)
+    T = drops.shape[0]
+    return fix_nonpositive_semidefinite(
+        (drops.T @ drops) / T * frequency,"spectral"
+    )
