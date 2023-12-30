@@ -15,7 +15,7 @@ import random
 import optuna
 
 from config import *
-from data.loader import load_price_data
+from dataloader import load_price_data
 
 PRODUCT_ID = 'ETH-USD'
 GRANULARITY = 'FIFTEEN_MINUTE'
