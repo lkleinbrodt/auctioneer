@@ -25,9 +25,10 @@ done
 
 commands=(
     "
-    apt install python3-venv && \
+    apt -y install python3-venv && \
     cd /workspace/ && \
     if [ ! -d auctioneer ] ; then
+        echo "Cloning auctioneer repo"
         git clone https://github.com/lkleinbrodt/auctioneer.git auctioneer
     fi && \
     cd /workspace/auctioneer && \
