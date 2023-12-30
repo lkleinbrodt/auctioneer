@@ -21,6 +21,8 @@ PRODUCT_ID = 'ETH-USD'
 GRANULARITY = 'FIFTEEN_MINUTE'
 PREDICTION_WINDOW = 24
 
+USE_S3 = True
+
 
 logger = create_logger(__name__, file = ROOT_DIR/'data/logs/lstm.log')
 
@@ -41,7 +43,7 @@ if not os.path.exists(ROOT_DIR / 'data' / 'models'):
 def get_time_series(product_id, granularity):
     logger.info('Loading data...')
     s3 = S3Client()
-    df = load_price_data(granularity, product_id)
+    df = load_price_data(granularity, product_id, s3 = USE_S3)
     
     df = df.set_index('start').sort_index()
 
@@ -347,7 +349,7 @@ def objective(trial, product_id):
     output_dir = ROOT_DIR/f'data/models/{output_name}/{trial.number}/'
     os.makedirs(output_dir, exist_ok = True)
     
-    price_df = load_price_data(GRANULARITY, product_id)
+    price_df = load_price_data(GRANULARITY, product_id, s3 = USE_S3)
     
     returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
     
@@ -394,7 +396,7 @@ def non_optuna():
     output_dir = ROOT_DIR/f'data/models/{output_name}/test/'
     os.makedirs(output_dir, exist_ok = True)
     
-    price_df = load_price_data(GRANULARITY, PRODUCT_ID)
+    price_df = load_price_data(GRANULARITY, PRODUCT_ID, s3 = USE_S3)
     
     returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
     

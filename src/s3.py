@@ -31,6 +31,12 @@ class S3Client:
         contents = s3_object["Body"].read()
         df = pd.read_csv(BytesIO(contents))
         return df
+
+    def read_parquet(self, path):
+        s3_object = self.s3.get_object(Bucket=self.bucket, Key=path)
+        contents = s3_object["Body"].read()
+        df = pd.read_parquet(BytesIO(contents))
+        return df
     
     def get_all_objects(self, **base_kwargs):
         continuation_token = None
@@ -46,6 +52,10 @@ class S3Client:
             
     def download_file(self, s3_path, local_path):
         self.s3.download_file(Bucket = self.bucket, Key = s3_path, Filename=local_path)
+        return True
+    
+    def upload_file(self, local_path, s3_path):
+        self.s3.upload_file(Bucket = self.bucket, Key = s3_path, Filename = local_path)
         return True
     
     def save_json(self, data, path):
