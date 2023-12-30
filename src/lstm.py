@@ -243,8 +243,8 @@ def create_random_target_datasets(returns, targets, window_size, val_frac = .05)
 
 def define_model(trial):
         
-    hidden_size = trial.suggest_categorical('hidden_size', [16, 32, 64, 128, 256])
-    num_layers = trial.suggest_int('num_layers', 1, 4)
+    hidden_size = trial.suggest_categorical('hidden_size', [16, 32, 64])
+    num_layers = trial.suggest_int('num_layers', 1, 2)
     dropout = trial.suggest_float('dropout', 0, .5, step = .05)
     model = LSTM(
         input_size = 1, 
@@ -362,7 +362,7 @@ def objective(trial, product_id):
     returns, returns_holdout = np.split(returns, [int(len(returns) * (1 - test_frac))])
     targets, targets_holdout = np.split(targets, [int(len(targets) * (1 - test_frac))])
     
-    window_size = trial.suggest_int('window_size', 4 * 6, 4 * 24 * 7)
+    window_size = trial.suggest_int('window_size', 4 * 6, 4 * 24 * 2)
     
     # logger.info('Creating datasets...')
     
