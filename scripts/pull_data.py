@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 
 #adds auctioneer/src to path for allowing imports
-sys.path.append(os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
+sys.path.append(os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src')))
 
 from config import *
 from coinbase_client import Client
@@ -159,7 +159,7 @@ def pull_large_missing_windows(df):
     ]
     periods = list(itertools.chain.from_iterable(periods))
 
-    async_pull_and_save(periods, id, 'ONE_MINUTE')
+    async_pull_and_save(periods, id, GRANULARITY)
     
     return True
 

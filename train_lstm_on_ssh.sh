@@ -25,6 +25,8 @@ done
 # apt -y install python3-venv && \
 commands=(
     "
+    . ~/.bashrc && \
+    sudo apt-get update && sudo apt-get -y upgrade && \
     cd /workspace/ && \
     if [ ! -d auctioneer ] ; then
         echo "Cloning auctioneer repo"
@@ -32,13 +34,11 @@ commands=(
     fi && \
     cd /workspace/auctioneer && \
     git pull && \
-    python3.10 -m venv venv && \
+    /opt/conda/bin/python3.10 -m venv venv && \
     source venv/bin/activate && \
     pip3 install -r requirements.txt
     "
 )
-
-
 
 
 $ssh_command <<EOF
@@ -61,9 +61,9 @@ $ssh_command <<EOF
     ${commands[@]}
 EOF
 
-# #terminate the instance:
+#terminate the instance:
 
-# # lol at this but hey it works!
+# lol at this but hey it works!
 output=$(vastai show instances --raw)
 instance_id=$(python -c "import sys, json; data = json.load(sys.stdin); print(data[0]['id'] if data else '')" <<< "$output")
 vastai destroy instance $instance_id

@@ -49,6 +49,7 @@ def get_time_series(product_id, granularity):
     logger.info('Loading data...')
     s3 = S3Client()
     df = load_price_data(granularity, product_id, s3 = USE_S3)
+    df['start'] = pd.to_datetime(df['start'], unit='s')
     
     df = df.set_index('start').sort_index()
 
@@ -247,8 +248,8 @@ def create_random_target_datasets(returns, targets, window_size, val_frac = .05)
 
 def define_model(trial):
         
-    hidden_size = trial.suggest_categorical('hidden_size', [16, 32, 64])
-    num_layers = trial.suggest_int('num_layers', 1, 2)
+    hidden_size = trial.suggest_categorical('hidden_size', [32, 64, 128])
+    num_layers = trial.suggest_int('num_layers', 2, 4)
     dropout = trial.suggest_float('dropout', 0, .5, step = .05)
     model = LSTM(
         input_size = 1, 
@@ -358,15 +359,14 @@ def objective(trial, product_id):
     os.makedirs(output_dir, exist_ok = True)
     
     price_df = load_price_data(GRANULARITY, product_id, s3 = USE_S3)
-    
+    price_df['start'] = pd.to_datetime(price_df['start'], unit='s')
+
     returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
     
     #TODO: use a date determined window size, to ensure that all model's test is same
     # for better backtesting of the strategy (not modeling)
-    test_frac = .01
-    
-    returns, returns_holdout = np.split(returns, [int(len(returns) * (1 - test_frac))])
-    targets, targets_holdout = np.split(targets, [int(len(targets) * (1 - test_frac))])
+    returns, returns_holdout = returns.loc[:'2023-11-01'], returns.loc['2023-11-01':]
+    targets, targets_holdout = targets.loc[:'2023-11-01'], targets.loc['2023-11-01':]
     
     #TODO: track window size
     window_size = trial.suggest_int('window_size', 4 * 6, 4 * 24 * 2)
@@ -452,9 +452,6 @@ def non_optuna():
 # %%
 if __name__ == '__main__':
     # non_optuna()
-    best_results = {}
-    with open(ROOT_DIR/'data/models/best_trials.json', 'w') as f:
-        json.dump(best_results, f)
         
     for product in ['BTC-USD', 'ETH-USD', 'SOL-USD', 'MATIC-USD', 'LINK-USD']:
         try:
@@ -471,7 +468,7 @@ if __name__ == '__main__':
                     s3 = S3Client()
                     s3.upload_file(ROOT_DIR/'data/models/best_trials.json', 'models/best_trials.json')
 
-            study.optimize(lambda trial: objective(trial, product), n_trials = 3, callbacks=[save_best_trial])
+            study.optimize(lambda trial: objective(trial, product), n_trials = 50, callbacks=[save_best_trial])
             
         except:
             logger.exception('Optuna failed')
