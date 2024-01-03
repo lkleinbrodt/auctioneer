@@ -17,6 +17,8 @@ import os
 import json
 import datetime
 
+from functools import lru_cache
+
 from config import *
 from dataloader import load_price_data
 import pytz
@@ -136,7 +138,8 @@ class LSTM(nn.Module):
             'input_size': input_size,
             'hidden_size': hidden_size,
             'prediction_window': prediction_window,
-            'num_layers': num_layers
+            'num_layers': num_layers,
+            'dropout': dropout,
         }
         
 
@@ -182,6 +185,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     
+@lru_cache()
 def load_model_from_params(path):
     path = str(path)
     assert path[-3:] == '.pt'
@@ -189,7 +193,7 @@ def load_model_from_params(path):
         startup_params = json.load(f)
     
     model = LSTM(**startup_params)
-    state_dict = torch.load(path)
+    state_dict = torch.load(path, map_location=DEVICE)
     model.load_state_dict(state_dict)
     return model    
 
@@ -207,11 +211,11 @@ def cumulative_return(returns):
     return (returns + 1).prod() - 1
 
 def create_returns_and_targets(price_df, prediction_window):
-    price_df = price_df.sort_values('start')
+    price_df = price_df.sort_values('start').set_index('start')
     price_df['returns'] = price_df['close'].pct_change()
     price_df['target'] = price_df['returns'].rolling(prediction_window).apply(cumulative_return).shift(-prediction_window + 1)
-    returns = price_df['returns'].values[1:] * 100 
-    targets = price_df['target'].values[1:] * 100
+    returns = price_df['returns'].iloc[1:] * 100 
+    targets = price_df['target'].iloc[1:] * 100
     return returns, targets
 
 def create_random_target_datasets(returns, targets, window_size, val_frac = .05):
@@ -357,17 +361,20 @@ def objective(trial, product_id):
     
     returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
     
+    #TODO: use a date determined window size, to ensure that all model's test is same
+    # for better backtesting of the strategy (not modeling)
     test_frac = .01
     
     returns, returns_holdout = np.split(returns, [int(len(returns) * (1 - test_frac))])
     targets, targets_holdout = np.split(targets, [int(len(targets) * (1 - test_frac))])
     
+    #TODO: track window size
     window_size = trial.suggest_int('window_size', 4 * 6, 4 * 24 * 2)
     
     # logger.info('Creating datasets...')
     
     X_train, y_train, X_val, y_val = create_random_target_datasets(
-        returns, targets,
+        returns.values, targets.values,
         window_size=window_size, 
     )
     
@@ -421,7 +428,7 @@ def non_optuna():
         window_size=window_size, 
     )
     
-    model = model = LSTM(
+    model = LSTM(
         input_size = 1, 
         hidden_size = 32, 
         prediction_window=PREDICTION_WINDOW,

@@ -13,3 +13,4 @@ pyarrow==14.0.2
 requests==2.31.0
 torch==2.1.2
 optuna==3.5.0
+matplotlib==3.8.2
