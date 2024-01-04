@@ -286,6 +286,9 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
     val_losses = []
     history_df = pd.DataFrame(columns=['train_loss', 'val_loss'])
     history_df.index.name = 'epoch'
+    
+    logger.warning(f'ENSURING THAT WE ARE USING {DEVICE}')
+    model = model.to(DEVICE)
 
     for epoch in range(n_epochs):
         batch_counter = 0
@@ -313,6 +316,7 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
         train_loss /= len(train_loader.dataset)
 
         model.eval()
+        model
         with torch.no_grad():
             # logger.info('validation time')
             for batch in val_loader:
