@@ -229,12 +229,19 @@ def create_random_target_datasets(returns, targets, window_size, val_frac = .05)
 
     X_train, y_train = [], []
     X_val, y_val = [], []
-
+    
+    #TODO: this isn't perfect, but it's a way of making semi-consistent splits for the same set of returns
+    random.seed(94903)
+    is_val = [
+        random.random() < val_frac
+        for _ in range(len(returns))
+    ]
+    
     for i in range(len(returns) - window_size):
         feature = returns[i:i+window_size]
         target = targets[i+window_size-1]
         
-        if random.random() < val_frac:
+        if is_val[i]:
             X_val.append(feature)
             y_val.append(target)
         else:
