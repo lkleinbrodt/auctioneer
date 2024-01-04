@@ -19,7 +19,8 @@ class LSTMTester:
         self.price_df = pd.DataFrame(self.prices_dict)
         self.fee_percentage=fee_percentage
         
-        self.expected_returns = {}
+        self.predicted_returns = {}
+        
 
     def load_dictionaries(self):
         logger.info(f"Initializing dictionaries for {self.product_ids}")
@@ -39,14 +40,21 @@ class LSTMTester:
             price_df = load_price_data(GRANULARITY, product_id, s3 = False)
             price_df['start'] = pd.to_datetime(price_df['start'], unit = 's')
             
-            price_df = price_df[price_df['start'] > '2023-07-01']
+            #TODO: better way of selecting holdout period to be in sync with training
+            price_df = price_df[price_df['start'] > '2023-11-01']
             
             returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
             
             # #TODO: improve
-            returns_holdout = returns[returns.index > '2023-08-01']
+            returns_holdout = returns[returns.index > '2023-11-01']
             self.returns_dict[product_id] = returns_holdout
             self.prices_dict[product_id] = price_df.set_index('start')['close'].loc[returns_holdout.index]
+    
+    def predict_returns(self):
+        
+        for ts in self.price_df.index:
+            #TODO: improve this to be batched instead of just one ts at a time
+            self.predicted_returns[ts] = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
             
     def test_period(self, time_steps):
     
@@ -68,17 +76,17 @@ class LSTMTester:
             
             values.append(current_value)
             
-            if ts not in self.expected_returns:
-                expected_returns = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
-                self.expected_returns[ts] = expected_returns
+            if ts not in self.predicted_returns:
+                predicted_returns = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
+                self.predicted_returns[ts] = predicted_returns
             else:
-                expected_returns = self.expected_returns[ts]
+                predicted_returns = self.predicted_returns[ts]
             
             current_dollar_positions = unit_to_dollar(current_unit_positions, current_prices)
             
             optimal_dollar_positions, expected_cash = next_allocation(
                 current_dollar_positions, 
-                expected_returns, 
+                predicted_returns, 
                 cash, 
                 self.fee_percentage + .15 #manually make have a higher threshold to make trades. #TODO: bettr way
             )
@@ -141,7 +149,10 @@ class LSTMTester:
         
         return values, trade_activity
         
-    def test(self, rolling = True, n_randoms = 0, verbose = False):
+    def test(self, rolling = True, n_randoms = 0, verbose = False, precalculate_predictions = True):
+        
+        if precalculate_predictions:
+            self.predict_returns()
         
         
         test_windows = []

@@ -1,29 +1,28 @@
 #%%
+
+from config import *
+from dataloader import load_price_data
+from helpers import *
+from s3 import S3Client
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau 
-import numpy as np
-import json
-import pandas as pd
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-
-from s3 import S3Client
-from io import BytesIO
-import numpy as np
-import torch.optim as optim
 import torch.utils.data as data
-import random
+
 import optuna
+
+import numpy as np
+import pandas as pd
+import json
+from io import BytesIO
 import os
+import random
 import json
 import datetime
-
-from functools import lru_cache
-
-from config import *
-from dataloader import load_price_data
 import pytz
+from functools import lru_cache
 
 PRODUCT_ID = 'ETH-USD'
 GRANULARITY = 'FIFTEEN_MINUTE'
@@ -358,6 +357,8 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
         
 def objective(trial: optuna.Trial, product_id):
     
+    start_time = datetime.datetime.now()
+    
     output_name = f'{product_id}_{GRANULARITY}'
     output_dir = ROOT_DIR/f'data/models/{RUN_ID}/{output_name}/{trial.number}/'
     os.makedirs(output_dir, exist_ok = True)
@@ -371,9 +372,11 @@ def objective(trial: optuna.Trial, product_id):
     targets, targets_holdout = targets.loc[:'2023-11-01'], targets.loc['2023-11-01':]
     
     #TODO: track window size
-    window_size = trial.suggest_int('window_size', 4 * 6, 4 * 24 * 2)
+    window_size = trial.suggest_int('window_size', 4 * 6, 4 * 24 * 5)
     
     # logger.info('Creating datasets...')
+    
+    #TODO: standardize the validation split across trials, otherwise it's not really a fair comparison
     
     X_train, y_train, X_val, y_val = create_random_target_datasets(
         returns.values, targets.values,
@@ -382,10 +385,10 @@ def objective(trial: optuna.Trial, product_id):
     
     model = define_model(trial)
     # logger.info(f"Model Size: {count_parameters(model)}")
-    batch_size_exponent = trial.suggest_int('batch_size_exponent', 3, 7)
+    batch_size_exponent = trial.suggest_int('batch_size_exponent', 3, 9)
     batch_size = 2 ** batch_size_exponent
     train_loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=batch_size)
-    val_loader = data.DataLoader(data.TensorDataset(X_val, y_val), shuffle=False, batch_size=64)
+    val_loader = data.DataLoader(data.TensorDataset(X_val, y_val), shuffle=False, batch_size=128)
     
     lr_exponent = trial.suggest_int('lr_exponent', -4, -2)
     starting_lr = 10 ** lr_exponent
@@ -396,7 +399,7 @@ def objective(trial: optuna.Trial, product_id):
     )
     
     lr_factor = trial.suggest_float('lr_decay_factor', 0.5, .9, step = .1)
-    lr_patience = trial.suggest_int('lr_patience', 1, 30, step = 5)
+    lr_patience = trial.suggest_int('lr_patience', 1, 31, step = 5)
     min_lr_exponent = trial.suggest_int('min_lr_exponent', -9, -4)
     min_lr = 10 ** min_lr_exponent
     
@@ -422,8 +425,9 @@ def objective(trial: optuna.Trial, product_id):
         s3 = S3Client()
         s3.upload_compressed_directory(output_dir, f'models/{RUN_ID}/{output_name}/{trial.number}.zip')
     
+    end_time = datetime.datetime.now()
+    logger.info(f'Trial took {format_elapsed_time(end_time - start_time)}')
     return min_val_loss
-        
         
         
 def non_optuna():
@@ -471,18 +475,29 @@ def non_optuna():
     min_val_loss, best_epoch = train(model, optimizer, train_loader, val_loader, output_dir, returns_holdout)
     
     return min_val_loss, best_epoch
+
+def get_pruner():
+    pruner = optuna.pruners.MedianPruner(
+        n_startup_trials = 2,
+        n_warmup_steps = 3
+    )
+    
+    return pruner
+
 # %%
 if __name__ == '__main__':
     # non_optuna()
     
-    product_list = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'MATIC-USD', 'LINK-USD']
-    product_list = list(reversed(product_list))
+    product_list = ['SOL-USD', 'MATIC-USD', 'LINK-USD', 'BTC-USD', 'ETH-USD', ]
     
     
     
     for product in product_list:
         try:
-            study = optuna.create_study(direction = 'minimize')
+            study = optuna.create_study(
+                direction = 'minimize',
+                pruner = get_pruner()
+            )
             
             #TODO: enque the params from the last run
             
@@ -491,7 +506,7 @@ if __name__ == '__main__':
                     'window_size': 4 * 24 * 3,
                     'hidden_size_exponent': 6,
                     'num_layers': 2,
-                    'dropout': .25,
+                    'dropout': .2,
                     'batch_size_exponent': 5,
                     'lr_exponent': -3
                 }
@@ -518,7 +533,7 @@ if __name__ == '__main__':
                     s3 = S3Client()
                     s3.upload_file(ROOT_DIR/f'data/models/{RUN_ID}/best_trials.json', f'models/{RUN_ID}/best_trials.json')
 
-            study.optimize(lambda trial: objective(trial, product), n_trials = 10, callbacks=[save_best_trial])
+            study.optimize(lambda trial: objective(trial, product), n_trials = 20, callbacks=[save_best_trial])
             
         except:
             logger.exception('Optuna failed')
