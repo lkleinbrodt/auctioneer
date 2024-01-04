@@ -2,10 +2,12 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau 
 import numpy as np
 import json
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
 from s3 import S3Client
 from io import BytesIO
 import numpy as np
@@ -27,7 +29,12 @@ PRODUCT_ID = 'ETH-USD'
 GRANULARITY = 'FIFTEEN_MINUTE'
 PREDICTION_WINDOW = 24
 
+N_TRIALS = 10
 USE_S3 = True
+
+pacific_tz = pytz.timezone('US/Pacific')
+timestamp = datetime.datetime.now(pacific_tz).strftime("%Y%m%d_%H%M")
+RUN_ID = timestamp
 
 
 logger = create_logger(__name__, file = ROOT_DIR/'data/logs/lstm.log')
@@ -248,7 +255,8 @@ def create_random_target_datasets(returns, targets, window_size, val_frac = .05)
 
 def define_model(trial):
         
-    hidden_size = trial.suggest_categorical('hidden_size', [32, 64, 128])
+    hidden_size_exponent = trial.suggest_int('hidden_size_exponent', 4, 8)
+    hidden_size = 2 ** hidden_size_exponent
     num_layers = trial.suggest_int('num_layers', 2, 4)
     dropout = trial.suggest_float('dropout', 0, .5, step = .05)
     model = LSTM(
@@ -260,14 +268,12 @@ def define_model(trial):
     )
     return model.to(DEVICE)
     
-def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdout):
-    
-    #TODO: LR decay
+def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdout, scheduler):
     
     loss_fn = nn.MSELoss()
     n_epochs = 100 #TODO: should be longer but i want to have some models to work with
     early_stop_count = 0
-    patience = 20
+    patience = 10 #TODO: should be longer but i want to have some models to work with
     min_val_loss = float('inf')
 
     train_losses = []
@@ -275,7 +281,6 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
     history_df = pd.DataFrame(columns=['train_loss', 'val_loss'])
     history_df.index.name = 'epoch'
 
-    # logger.info('Training model...')
     for epoch in range(n_epochs):
         batch_counter = 0
         train_loss = 0.0
@@ -342,20 +347,19 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
                 logger.info('Stopping early! {}'.format(epoch))
                 break
             
+        scheduler.step(val_loss)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         
         history_df.loc[epoch] = pd.Series({'train_loss': train_loss, 'val_loss': val_loss}, name = epoch)
         history_df.to_csv(output_dir/'lstm_history.csv', index = True)
         
-        # s3.write_csv(history_df, f'models/{output_name}/lstm_history.csv', index = True)
-        
     return min_val_loss, best_epoch
         
-def objective(trial, product_id):
+def objective(trial: optuna.Trial, product_id):
     
     output_name = f'{product_id}_{GRANULARITY}'
-    output_dir = ROOT_DIR/f'data/models/{output_name}/{trial.number}/'
+    output_dir = ROOT_DIR/f'data/models/{RUN_ID}/{output_name}/{trial.number}/'
     os.makedirs(output_dir, exist_ok = True)
     
     price_df = load_price_data(GRANULARITY, product_id, s3 = USE_S3)
@@ -363,8 +367,6 @@ def objective(trial, product_id):
 
     returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
     
-    #TODO: use a date determined window size, to ensure that all model's test is same
-    # for better backtesting of the strategy (not modeling)
     returns, returns_holdout = returns.loc[:'2023-11-01'], returns.loc['2023-11-01':]
     targets, targets_holdout = targets.loc[:'2023-11-01'], targets.loc['2023-11-01':]
     
@@ -380,16 +382,36 @@ def objective(trial, product_id):
     
     model = define_model(trial)
     # logger.info(f"Model Size: {count_parameters(model)}")
-    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128])
+    batch_size_exponent = trial.suggest_int('batch_size_exponent', 3, 7)
+    batch_size = 2 ** batch_size_exponent
     train_loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=batch_size)
     val_loader = data.DataLoader(data.TensorDataset(X_val, y_val), shuffle=False, batch_size=64)
     
+    lr_exponent = trial.suggest_int('lr_exponent', -4, -2)
+    starting_lr = 10 ** lr_exponent
+    
     optimizer = optim.Adam(
         model.parameters(),
-        lr = trial.suggest_categorical('lr', [1e-5, 1e-4, 1e-3, 1e-2]),
+        lr = starting_lr,
     )
     
-    min_val_loss, best_epoch = train(model, optimizer, train_loader, val_loader, output_dir, returns_holdout)
+    lr_factor = trial.suggest_float('lr_decay_factor', 0.5, .9, step = .1)
+    lr_patience = trial.suggest_int('lr_patience', 1, 30, step = 5)
+    min_lr_exponent = trial.suggest_int('min_lr_exponent', -9, -4)
+    min_lr = 10 ** min_lr_exponent
+    
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        'min',
+        factor = lr_factor,
+        patience = lr_patience,
+        verbose = False,
+        threshold_mode = 'abs',
+        min_lr=min_lr
+    )
+    
+    logger.info(f"Training with params: {trial.params}")
+    min_val_loss, best_epoch = train(model, optimizer, train_loader, val_loader, output_dir, returns_holdout, scheduler)
 
     trial.report(min_val_loss, best_epoch)
     
@@ -398,7 +420,7 @@ def objective(trial, product_id):
     
     if USE_S3:
         s3 = S3Client()
-        s3.upload_compressed_directory(output_dir, f'models/{output_name}/{trial.number}.zip')
+        s3.upload_compressed_directory(output_dir, f'models/{RUN_ID}/{output_name}/{trial.number}.zip')
     
     return min_val_loss
         
@@ -407,7 +429,7 @@ def objective(trial, product_id):
 def non_optuna():
     output_name = f'{PRODUCT_ID}_{GRANULARITY}'
     # output_dir = ROOT_DIR/f'data/models/{output_name}/{trial.number}/'
-    output_dir = ROOT_DIR/f'data/models/{output_name}/test/'
+    output_dir = ROOT_DIR/f'data/models/{RUN_ID}/{output_name}/test/'
     os.makedirs(output_dir, exist_ok = True)
     
     price_df = load_price_data(GRANULARITY, PRODUCT_ID, s3 = USE_S3)
@@ -452,23 +474,51 @@ def non_optuna():
 # %%
 if __name__ == '__main__':
     # non_optuna()
-        
-    for product in ['BTC-USD', 'ETH-USD', 'SOL-USD', 'MATIC-USD', 'LINK-USD']:
+    
+    product_list = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'MATIC-USD', 'LINK-USD']
+    product_list = list(reversed(product_list))
+    
+    
+    
+    for product in product_list:
         try:
             study = optuna.create_study(direction = 'minimize')
             
+            #TODO: enque the params from the last run
+            
+            study.enqueue_trial(
+                {
+                    'window_size': 4 * 24 * 3,
+                    'hidden_size_exponent': 6,
+                    'num_layers': 2,
+                    'dropout': .25,
+                    'batch_size_exponent': 5,
+                    'lr_exponent': -3
+                }
+            )
+            
             def save_best_trial(study, trial):
                 #TODO: have this extract the appropriate model and save it properly
-                with open(ROOT_DIR/'data/models/best_trials.json', 'r') as f:
-                    best_results = json.load(f)
-                best_results[product] = study.best_trial.number
-                with open(ROOT_DIR/'data/models/best_trials.json', 'w') as f:
+                try:
+                    with open(ROOT_DIR/f'data/models/{RUN_ID}/best_trials.json', 'r') as f:
+                        best_results = json.load(f)
+                except FileNotFoundError:
+                    best_results = {}
+                    logger.error('No best trials file found, creating one')
+                    
+                best_results[product] = {
+                    'best_number': study.best_trial.number,
+                    'best_params': study.best_params
+                }
+                
+                with open(ROOT_DIR/f'data/models/{RUN_ID}/best_trials.json', 'w') as f:
                     json.dump(best_results, f)
+                    
                 if USE_S3:
                     s3 = S3Client()
-                    s3.upload_file(ROOT_DIR/'data/models/best_trials.json', 'models/best_trials.json')
+                    s3.upload_file(ROOT_DIR/f'data/models/{RUN_ID}/best_trials.json', f'models/{RUN_ID}/best_trials.json')
 
-            study.optimize(lambda trial: objective(trial, product), n_trials = 50, callbacks=[save_best_trial])
+            study.optimize(lambda trial: objective(trial, product), n_trials = 10, callbacks=[save_best_trial])
             
         except:
             logger.exception('Optuna failed')
@@ -478,6 +528,5 @@ if __name__ == '__main__':
 
     if USE_S3:
         s3 = S3Client()
-        pacific_tz = pytz.timezone('US/Pacific')
-        timestamp = datetime.datetime.now(pacific_tz).strftime("%Y%m%d_%H%M")
-        s3.upload_compressed_directory(ROOT_DIR/'data/models', f'training_results_{timestamp}.zip')
+        
+        s3.upload_compressed_directory(ROOT_DIR/'data/models/{RUN_ID}', f'training_results_{timestamp}.zip')
