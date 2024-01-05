@@ -287,7 +287,9 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
     history_df = pd.DataFrame(columns=['train_loss', 'val_loss'])
     history_df.index.name = 'epoch'
     
-    logger.warning(f'ENSURING THAT WE ARE USING {DEVICE}')
+    
+    #TODO: find out why it was on the wrong device in the first place
+    logger.info(f'ENSURING THAT WE ARE USING {DEVICE}')
     model = model.to(DEVICE)
 
     for epoch in range(n_epochs):
@@ -330,12 +332,12 @@ def train(model, optimizer, train_loader, val_loader, output_dir, returns_holdou
             val_loss /= len(val_loader.dataset)
             
             
-            
+        logger.info("Epoch %d: train RMSE %.4f, val RMSE %.4f" % (epoch, train_loss, val_loss))
+        
         if val_loss < min_val_loss:
             min_val_loss = val_loss
             early_stop_count = 0
             best_epoch = epoch
-            logger.info("Epoch %d: train RMSE %.4f, val RMSE %.4f" % (epoch, train_loss, val_loss))
             model.eval()
             model.save(output_dir/'lstm_best.pt')
 
@@ -504,6 +506,7 @@ if __name__ == '__main__':
     
     
     for product in product_list:
+        logger.info(f'Running {product}')
         try:
             study = optuna.create_study(
                 direction = 'minimize',
@@ -555,4 +558,4 @@ if __name__ == '__main__':
     if USE_S3:
         s3 = S3Client()
         
-        s3.upload_compressed_directory(ROOT_DIR/'data/models/{RUN_ID}', f'training_results_{timestamp}.zip')
+        s3.upload_compressed_directory(ROOT_DIR/f'data/models/{RUN_ID}', f'training_results_{timestamp}.zip')
