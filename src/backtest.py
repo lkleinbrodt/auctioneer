@@ -3,6 +3,7 @@ from config import *
 from lstm import *
 import zipfile
 from scipy.optimize import minimize
+import json
 s3 = S3Client()
 
 # best_trials = s3.load_json('models/best_trials.json')
@@ -12,31 +13,28 @@ logger = create_logger(__name__)
 class LSTMTester:
     "This is a bit ugly of a class but it does make things easier to manage"
     
-    def __init__(self, product_ids: List[str], fee_percentage: float):
-        
-        self.product_ids = product_ids
-        self.load_dictionaries()
+    def __init__(self, models_path = ROOT_DIR/'data/models/champions/', fee_percentage: float = .01):
+        self.load_dictionaries(models_path)
         self.price_df = pd.DataFrame(self.prices_dict)
         self.fee_percentage=fee_percentage
         
         self.predicted_returns = {}
         
 
-    def load_dictionaries(self):
-        logger.info(f"Initializing dictionaries for {self.product_ids}")
+    def load_dictionaries(self, path):
+        logger.info(f"Initializing dictionaries")
+        
+        with open(path / 'best_trials.json', 'r') as file:
+            best_trials = json.load(file)
         
         self.models_dict = {}
         self.returns_dict = {}
         self.prices_dict = {}
 
-        for product_id in self.product_ids:
-            # s3.download_file(f"models/{product_id}_{granularity}/{best_trial}.zip", ROOT_DIR/"data/tmp.zip")
-            # os.makedirs(ROOT_DIR/f"data/tmp/{product_id}_{granularity}", exist_ok=True)
-            # with zipfile.ZipFile(ROOT_DIR/'data/tmp.zip', 'r') as zip_ref:
-            #     zip_ref.extractall(ROOT_DIR/f"data/tmp/{product_id}_{granularity}")
-            model = load_model_from_params(ROOT_DIR/f"data/tmp/{product_id}_{granularity}/lstm_best.pt")
+        for product_id in best_trials.keys():
+            model = load_model_from_params(path/f"{product_id}_{GRANULARITY}/lstm_best.pt")
             self.models_dict[product_id] = model
-            #TODO: this can be more efficient
+            
             price_df = load_price_data(GRANULARITY, product_id, s3 = False)
             price_df['start'] = pd.to_datetime(price_df['start'], unit = 's')
             
@@ -46,15 +44,20 @@ class LSTMTester:
             returns, targets = create_returns_and_targets(price_df, PREDICTION_WINDOW)
             
             # #TODO: improve
-            returns_holdout = returns[returns.index > '2023-11-01']
+            #TODO: now the predictions dont get a window size buildup, which is not right
+            returns_holdout = returns[returns.index > '2023-12-01']
             self.returns_dict[product_id] = returns_holdout
             self.prices_dict[product_id] = price_df.set_index('start')['close'].loc[returns_holdout.index]
+            
+
+            
     
     def predict_returns(self):
         
         for ts in self.price_df.index:
             #TODO: improve this to be batched instead of just one ts at a time
-            self.predicted_returns[ts] = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
+            if ts not in self.predicted_returns:
+                self.predicted_returns[ts] = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
             
     def test_period(self, time_steps):
     
@@ -77,10 +80,9 @@ class LSTMTester:
             values.append(current_value)
             
             if ts not in self.predicted_returns:
-                predicted_returns = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
-                self.predicted_returns[ts] = predicted_returns
-            else:
-                predicted_returns = self.predicted_returns[ts]
+                self.predicted_returns[ts] = calculate_expected_returns(self.models_dict, self.returns_dict, ts)
+
+            predicted_returns = self.predicted_returns[ts]
             
             current_dollar_positions = unit_to_dollar(current_unit_positions, current_prices)
             
@@ -88,7 +90,7 @@ class LSTMTester:
                 current_dollar_positions, 
                 predicted_returns, 
                 cash, 
-                self.fee_percentage + .15 #manually make have a higher threshold to make trades. #TODO: bettr way
+                self.fee_percentage + .75 #manually make have a higher threshold to make trades. #TODO: bettr way
             )
 
             optimal_unit_positions = dollar_to_unit(optimal_dollar_positions, current_prices)

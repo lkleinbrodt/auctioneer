@@ -34,7 +34,7 @@ USE_S3 = True
 pacific_tz = pytz.timezone('US/Pacific')
 timestamp = datetime.datetime.now(pacific_tz).strftime("%Y%m%d_%H%M")
 RUN_ID = timestamp
-
+RUN_ID = '20240104_1055_BTCETH'
 
 logger = create_logger(__name__, file = ROOT_DIR/'data/logs/lstm.log')
 
@@ -501,7 +501,7 @@ def get_pruner():
 if __name__ == '__main__':
     # non_optuna()
     
-    product_list = ['SOL-USD', 'MATIC-USD', 'LINK-USD', 'BTC-USD', 'ETH-USD', ]
+    product_list = ['BTC-USD', 'ETH-USD', ]
     
     
     
@@ -547,7 +547,7 @@ if __name__ == '__main__':
                     s3 = S3Client()
                     s3.upload_file(ROOT_DIR/f'data/models/{RUN_ID}/best_trials.json', f'models/{RUN_ID}/best_trials.json')
 
-            study.optimize(lambda trial: objective(trial, product), n_trials = 20, callbacks=[save_best_trial])
+            study.optimize(lambda trial: objective(trial, product), n_trials = 10, callbacks=[save_best_trial])
             
         except:
             logger.exception('Optuna failed')
@@ -558,4 +558,4 @@ if __name__ == '__main__':
     if USE_S3:
         s3 = S3Client()
         
-        s3.upload_compressed_directory(ROOT_DIR/f'data/models/{RUN_ID}', f'training_results_{timestamp}.zip')
+        s3.upload_compressed_directory(ROOT_DIR/f'data/models/{RUN_ID}', f'training_results_{RUN_ID}.zip')
